@@ -24,7 +24,10 @@ import {
   T,
   Rectangle2d,
   Geometry2d,
+  useEditor,
+  stopEventPropagation,
 } from "tldraw";
+import { useEffect, useRef, useState } from "react";
 
 // ─── Shared shape props ──────────────────────────────────────────────
 
@@ -64,30 +67,258 @@ function strokeDashArray(dash: DirectoorShapeProps["dash"]): string {
   return "0";
 }
 
-// Common label rendering — used by all custom shapes
-function ShapeLabel({ label, w, h }: { label: string; w: number; h: number }) {
+/**
+ * Editable label for all Directoor custom shapes.
+ *
+ * Behavior:
+ * - Shows the label as static text by default
+ * - When tldraw marks this shape as being edited (editor.getEditingShapeId() === shape.id),
+ *   renders a contentEditable div that auto-focuses and commits on blur / Enter
+ * - Escape cancels the edit
+ *
+ * This requires the shape util to override canEdit() => true so tldraw
+ * enters edit mode on double-click.
+ */
+function EditableLabel({
+  shapeId,
+  label,
+  w,
+  h,
+  bottomAnchored = false,
+}: {
+  shapeId: string;
+  label: string;
+  w: number;
+  h: number;
+  /** If true, label sits at the bottom (used by actor / document shapes) */
+  bottomAnchored?: boolean;
+}) {
+  const editor = useEditor();
+  const isEditing = editor.getEditingShapeId() === shapeId;
+  const [draft, setDraft] = useState(label);
+  const inputRef = useRef<HTMLDivElement | null>(null);
+
+  // Reset draft whenever we enter edit mode
+  useEffect(() => {
+    if (isEditing) {
+      setDraft(label);
+      // Focus + select-all after mount
+      const t = setTimeout(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.focus();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [isEditing, label]);
+
+  const commit = () => {
+    const shape = editor.getShape(shapeId);
+    if (!shape) return;
+    const trimmed = draft.trim();
+    if (trimmed !== label) {
+      editor.updateShape({
+        id: shape.id,
+        type: shape.type,
+        props: { ...(shape.props as Record<string, unknown>), label: trimmed },
+      });
+    }
+    editor.setEditingShape(null);
+  };
+
+  const cancel = () => {
+    setDraft(label);
+    editor.setEditingShape(null);
+  };
+
+  // Shared label style
+  const fontSize = Math.min(16, Math.max(10, h / 6));
+  const baseStyle: React.CSSProperties = {
+    position: "absolute",
+    ...(bottomAnchored
+      ? { left: 0, right: 0, bottom: 4, textAlign: "center", padding: "0 4px" }
+      : { inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }),
+    fontFamily: "Inter, system-ui, sans-serif",
+    fontSize: bottomAnchored ? 12 : fontSize,
+    fontWeight: 600,
+    color: "#0f172a",
+    lineHeight: 1.2,
+    wordBreak: "break-word",
+  };
+
+  if (isEditing) {
+    return (
+      <div
+        ref={inputRef}
+        contentEditable
+        suppressContentEditableWarning
+        onPointerDown={stopEventPropagation}
+        onMouseDown={stopEventPropagation}
+        onClick={stopEventPropagation}
+        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+          e.stopPropagation();
+        }}
+        style={{
+          ...baseStyle,
+          cursor: "text",
+          outline: "2px solid #3b82f6",
+          outlineOffset: 2,
+          borderRadius: 4,
+          background: "rgba(255,255,255,0.95)",
+          whiteSpace: "pre-wrap",
+          pointerEvents: "all",
+          userSelect: "text",
+        }}
+      >
+        {label}
+      </div>
+    );
+  }
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        pointerEvents: "none",
-        padding: 8,
-        fontFamily: "Inter, system-ui, sans-serif",
-        fontSize: Math.min(16, Math.max(10, h / 6)),
-        fontWeight: 600,
-        color: "#0f172a",
-        textAlign: "center",
-        wordBreak: "break-word",
-        lineHeight: 1.2,
-      }}
-    >
+    <div style={{ ...baseStyle, pointerEvents: "none", textAlign: "center" }}>
       {label}
     </div>
   );
+}
+
+// Kept for backward compat with existing call sites that don't need edit
+function ShapeLabel({ shapeId, label, w, h }: { shapeId: string; label: string; w: number; h: number }) {
+  return <EditableLabel shapeId={shapeId} label={label} w={w} h={h} />;
+}
+
+/**
+ * Editable label positioned to the front-most layer of the Stack shape.
+ * Uses the same editing logic as EditableLabel but with custom positioning.
+ */
+function StackLabel({
+  shapeId,
+  label,
+  topOffset,
+  innerW,
+  innerH,
+}: {
+  shapeId: string;
+  label: string;
+  topOffset: number;
+  innerW: number;
+  innerH: number;
+}) {
+  const editor = useEditor();
+  const isEditing = editor.getEditingShapeId() === shapeId;
+  const [draft, setDraft] = useState(label);
+  const inputRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      setDraft(label);
+      const t = setTimeout(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.focus();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [isEditing, label]);
+
+  const commit = () => {
+    const shape = editor.getShape(shapeId);
+    if (!shape) return;
+    const trimmed = draft.trim();
+    if (trimmed !== label) {
+      editor.updateShape({
+        id: shape.id,
+        type: shape.type,
+        props: { ...(shape.props as Record<string, unknown>), label: trimmed },
+      });
+    }
+    editor.setEditingShape(null);
+  };
+
+  const cancel = () => {
+    setDraft(label);
+    editor.setEditingShape(null);
+  };
+
+  const baseStyle: React.CSSProperties = {
+    position: "absolute",
+    left: 0,
+    top: topOffset,
+    width: innerW,
+    height: innerH,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontFamily: "Inter, system-ui, sans-serif",
+    fontSize: Math.min(15, Math.max(10, innerH / 6)),
+    fontWeight: 600,
+    color: "#0f172a",
+    textAlign: "center",
+    padding: 6,
+    wordBreak: "break-word",
+    lineHeight: 1.2,
+  };
+
+  if (isEditing) {
+    return (
+      <div
+        ref={inputRef}
+        contentEditable
+        suppressContentEditableWarning
+        onPointerDown={stopEventPropagation}
+        onMouseDown={stopEventPropagation}
+        onClick={stopEventPropagation}
+        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+          e.stopPropagation();
+        }}
+        style={{
+          ...baseStyle,
+          cursor: "text",
+          outline: "2px solid #3b82f6",
+          outlineOffset: 2,
+          borderRadius: 4,
+          background: "rgba(255,255,255,0.95)",
+          whiteSpace: "pre-wrap",
+          pointerEvents: "all",
+          userSelect: "text",
+        }}
+      >
+        {label}
+      </div>
+    );
+  }
+
+  return <div style={{ ...baseStyle, pointerEvents: "none" }}>{label}</div>;
 }
 
 // ─── Cylinder Shape (databases, topics, storage) ─────────────────────
@@ -97,6 +328,10 @@ export type DirectoorCylinderShape = TLBaseShape<"directoor-cylinder", Directoor
 export class DirectoorCylinderShapeUtil extends BaseBoxShapeUtil<DirectoorCylinderShape> {
   static override type = "directoor-cylinder" as const;
   static override props = sharedProps as RecordProps<DirectoorCylinderShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return defaultProps;
@@ -134,7 +369,7 @@ export class DirectoorCylinderShapeUtil extends BaseBoxShapeUtil<DirectoorCylind
             strokeDasharray={dashArray}
           />
         </svg>
-        <ShapeLabel label={label} w={w} h={h} />
+        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
       </HTMLContainer>
     );
   }
@@ -151,6 +386,10 @@ export type DirectoorHexagonShape = TLBaseShape<"directoor-hexagon", DirectoorSh
 export class DirectoorHexagonShapeUtil extends BaseBoxShapeUtil<DirectoorHexagonShape> {
   static override type = "directoor-hexagon" as const;
   static override props = sharedProps as RecordProps<DirectoorHexagonShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return { ...defaultProps, w: 130, h: 110 };
@@ -185,7 +424,7 @@ export class DirectoorHexagonShapeUtil extends BaseBoxShapeUtil<DirectoorHexagon
             strokeLinejoin="round"
           />
         </svg>
-        <ShapeLabel label={label} w={w} h={h} />
+        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
       </HTMLContainer>
     );
   }
@@ -202,6 +441,10 @@ export type DirectoorActorShape = TLBaseShape<"directoor-actor", DirectoorShapeP
 export class DirectoorActorShapeUtil extends BaseBoxShapeUtil<DirectoorActorShape> {
   static override type = "directoor-actor" as const;
   static override props = sharedProps as RecordProps<DirectoorActorShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return { ...defaultProps, w: 100, h: 110 };
@@ -236,19 +479,8 @@ export class DirectoorActorShapeUtil extends BaseBoxShapeUtil<DirectoorActorShap
           <line x1={cx} y1={bodyBottom} x2={cx - w * 0.2} y2={bodyBottom + h * 0.18} stroke={color} strokeWidth={2.5} strokeDasharray={dashArray} />
           <line x1={cx} y1={bodyBottom} x2={cx + w * 0.2} y2={bodyBottom + h * 0.18} stroke={color} strokeWidth={2.5} strokeDasharray={dashArray} />
         </svg>
-        {/* Label below the figure */}
-        <div style={{
-          position: "absolute",
-          left: 0, right: 0, bottom: 4,
-          textAlign: "center",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#0f172a",
-          padding: "0 4px",
-          wordBreak: "break-word",
-          pointerEvents: "none",
-        }}>{label}</div>
+        {/* Label below the figure — editable */}
+        <EditableLabel shapeId={shape.id} label={label} w={w} h={h} bottomAnchored />
       </HTMLContainer>
     );
   }
@@ -265,6 +497,10 @@ export type DirectoorCloudShape = TLBaseShape<"directoor-cloud", DirectoorShapeP
 export class DirectoorCloudShapeUtil extends BaseBoxShapeUtil<DirectoorCloudShape> {
   static override type = "directoor-cloud" as const;
   static override props = sharedProps as RecordProps<DirectoorCloudShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return { ...defaultProps, w: 150, h: 90 };
@@ -292,7 +528,7 @@ export class DirectoorCloudShapeUtil extends BaseBoxShapeUtil<DirectoorCloudShap
         <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
           <path d={path} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
         </svg>
-        <ShapeLabel label={label} w={w} h={h} />
+        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
       </HTMLContainer>
     );
   }
@@ -309,6 +545,10 @@ export type DirectoorDocumentShape = TLBaseShape<"directoor-document", Directoor
 export class DirectoorDocumentShapeUtil extends BaseBoxShapeUtil<DirectoorDocumentShape> {
   static override type = "directoor-document" as const;
   static override props = sharedProps as RecordProps<DirectoorDocumentShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return { ...defaultProps, w: 110, h: 130 };
@@ -356,18 +596,7 @@ export class DirectoorDocumentShapeUtil extends BaseBoxShapeUtil<DirectoorDocume
             />
           ))}
         </svg>
-        <div style={{
-          position: "absolute",
-          left: 0, right: 0, bottom: 6,
-          textAlign: "center",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 11,
-          fontWeight: 600,
-          color: "#0f172a",
-          padding: "0 4px",
-          wordBreak: "break-word",
-          pointerEvents: "none",
-        }}>{label}</div>
+        <EditableLabel shapeId={shape.id} label={label} w={w} h={h} bottomAnchored />
       </HTMLContainer>
     );
   }
@@ -384,6 +613,10 @@ export type DirectoorStackShape = TLBaseShape<"directoor-stack", DirectoorShapeP
 export class DirectoorStackShapeUtil extends BaseBoxShapeUtil<DirectoorStackShape> {
   static override type = "directoor-stack" as const;
   static override props = sharedProps as RecordProps<DirectoorStackShape>;
+
+  override canEdit(): boolean {
+    return true;
+  }
 
   override getDefaultProps(): DirectoorShapeProps {
     return { ...defaultProps, w: 130, h: 100 };
@@ -424,26 +657,14 @@ export class DirectoorStackShapeUtil extends BaseBoxShapeUtil<DirectoorStackShap
             );
           })}
         </svg>
-        {/* Label is on the front-most layer */}
-        <div style={{
-          position: "absolute",
-          left: 0,
-          top: offset * (layers - 1) + 2,
-          width: innerW,
-          height: innerH,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: Math.min(15, Math.max(10, innerH / 6)),
-          fontWeight: 600,
-          color: "#0f172a",
-          textAlign: "center",
-          padding: 6,
-          wordBreak: "break-word",
-          lineHeight: 1.2,
-          pointerEvents: "none",
-        }}>{label}</div>
+        {/* Label is on the front-most layer — editable */}
+        <StackLabel
+          shapeId={shape.id}
+          label={label}
+          topOffset={offset * (layers - 1) + 2}
+          innerW={innerW}
+          innerH={innerH}
+        />
       </HTMLContainer>
     );
   }

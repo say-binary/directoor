@@ -249,7 +249,7 @@ const KAFKA_PRODUCER = obj({
   semanticType: 'kafka-producer', displayName: 'Producer', category: 'streaming',
   iconShape: 'rectangle',
   defaultStyle: styled('#DBEAFE', '#2563EB'),
-  defaultSize: { width: 130, height: 70 },
+  defaultSize: { width: 150, height: 75 },
   typicalTargets: ['kafka-topic', 'kafka-broker'],
   typicalSources: [],
   aliases: ['producer', 'kafka producer', 'event producer', 'publisher', 'message producer'],
@@ -259,7 +259,7 @@ const KAFKA_CONSUMER = obj({
   semanticType: 'kafka-consumer', displayName: 'Consumer', category: 'streaming',
   iconShape: 'rectangle',
   defaultStyle: styled('#DCFCE7', '#16A34A'),
-  defaultSize: { width: 130, height: 70 },
+  defaultSize: { width: 150, height: 75 },
   typicalTargets: ['database', 'cache', 'service', 'storage'],
   typicalSources: ['kafka-topic', 'consumer-group'],
   aliases: ['consumer', 'kafka consumer', 'event consumer', 'subscriber', 'message consumer'],
@@ -269,7 +269,7 @@ const CONSUMER_GROUP = obj({
   semanticType: 'consumer-group', displayName: 'Consumer Group', category: 'streaming',
   iconShape: 'rectangle',
   defaultStyle: styled('#ECFDF5', '#059669', { strokeStyle: 'dashed' }),
-  defaultSize: { width: 180, height: 130 },
+  defaultSize: { width: 220, height: 170 },
   typicalTargets: ['kafka-consumer'],
   typicalSources: ['kafka-topic'],
   aliases: ['consumer group', 'kafka consumer group', 'cg'],
@@ -286,9 +286,9 @@ const PARTITION = obj({
 
 const ZOOKEEPER = obj({
   semanticType: 'zookeeper', displayName: 'ZooKeeper', category: 'streaming',
-  iconShape: 'rectangle',
+  iconShape: 'stack',
   defaultStyle: styled('#F3E8FF', '#9333EA'),
-  defaultSize: { width: 130, height: 60 },
+  defaultSize: { width: 130, height: 90 },
   typicalTargets: ['kafka-broker'],
   typicalSources: [],
   aliases: ['zookeeper', 'zk', 'kafka zookeeper', 'kraft'],
@@ -306,9 +306,9 @@ const RABBITMQ_EXCHANGE = obj({
 
 const RABBITMQ_QUEUE = obj({
   semanticType: 'rabbitmq-queue', displayName: 'RabbitMQ Queue', category: 'streaming',
-  iconShape: 'rectangle',
+  iconShape: 'cylinder',
   defaultStyle: styled('#FFE4E6', '#BE123C'),
-  defaultSize: { width: 130, height: 60 },
+  defaultSize: { width: 140, height: 75 },
   typicalTargets: ['service', 'worker'],
   typicalSources: ['rabbitmq-exchange'],
   aliases: ['rabbitmq', 'rabbit', 'rabbitmq queue', 'amqp queue'],
@@ -336,9 +336,9 @@ const NATS = obj({
 
 const EVENT_BUS = obj({
   semanticType: 'event-bus', displayName: 'Event Bus', category: 'streaming',
-  iconShape: 'rectangle',
+  iconShape: 'stack',
   defaultStyle: styled('#FEF3C7', '#F59E0B'),
-  defaultSize: { width: 180, height: 50 },
+  defaultSize: { width: 170, height: 85 },
   typicalTargets: ['function', 'lambda', 'service'],
   typicalSources: ['service', 'function', 'lambda'],
   aliases: ['event bus', 'eventbridge', 'event grid', 'event hub'],
@@ -346,9 +346,9 @@ const EVENT_BUS = obj({
 
 const WEBHOOK = obj({
   semanticType: 'webhook', displayName: 'Webhook', category: 'streaming',
-  iconShape: 'rectangle',
+  iconShape: 'document',
   defaultStyle: styled('#FEF2F2', '#DC2626', { strokeStyle: 'dashed' }),
-  defaultSize: { width: 130, height: 60 },
+  defaultSize: { width: 120, height: 90 },
   typicalTargets: ['service', 'function', 'api-gateway'],
   typicalSources: ['external-system'],
   aliases: ['webhook', 'callback url', 'http callback'],
@@ -541,9 +541,9 @@ const ETL_PIPELINE = obj({
 
 const STREAM_PROCESSOR = obj({
   semanticType: 'stream-processor', displayName: 'Stream Processor', category: 'data',
-  iconShape: 'rectangle',
+  iconShape: 'stack',
   defaultStyle: styled('#F0FDFA', '#0D9488'),
-  defaultSize: { width: 160, height: 75 },
+  defaultSize: { width: 160, height: 95 },
   typicalTargets: ['database', 'data-lake', 'snowflake', 'bigquery'],
   typicalSources: ['kafka-topic', 'pulsar'],
   aliases: ['stream processor', 'flink', 'spark streaming', 'kafka streams', 'kinesis analytics', 'beam'],
@@ -601,9 +601,9 @@ const NAT_GATEWAY = obj({
 
 const DNS = obj({
   semanticType: 'dns', displayName: 'DNS', category: 'networking',
-  iconShape: 'rectangle',
+  iconShape: 'cloud',
   defaultStyle: styled('#FAF5FF', '#9333EA'),
-  defaultSize: { width: 130, height: 60 },
+  defaultSize: { width: 140, height: 85 },
   typicalTargets: ['load-balancer', 'cdn', 'api-gateway'],
   typicalSources: ['client', 'browser'],
   aliases: ['dns', 'route 53', 'cloudflare dns', 'name server'],
@@ -690,18 +690,18 @@ const IAM_ROLE = obj({
 
 const SECRET_MANAGER = obj({
   semanticType: 'secret-manager', displayName: 'Secret Manager', category: 'auth',
-  iconShape: 'rectangle',
+  iconShape: 'cylinder',
   defaultStyle: styled('#FEF3C7', '#92400E'),
-  defaultSize: { width: 140, height: 65 },
+  defaultSize: { width: 140, height: 80 },
   typicalTargets: [], typicalSources: ['service', 'lambda', 'function'],
   aliases: ['secrets', 'secret manager', 'aws secrets', 'gcp secret manager', 'doppler', 'infisical', 'parameter store'],
 });
 
 const VAULT = obj({
   semanticType: 'vault', displayName: 'Vault', category: 'auth',
-  iconShape: 'rectangle',
-  defaultStyle: styled('#1F2937', '#000000', { fontSize: 14 }),
-  defaultSize: { width: 130, height: 70 },
+  iconShape: 'cylinder',
+  defaultStyle: styled('#F1F5F9', '#0F172A', { fontSize: 14 }),
+  defaultSize: { width: 130, height: 80 },
   typicalTargets: [], typicalSources: ['service', 'lambda'],
   aliases: ['vault', 'hashicorp vault', 'kms'],
 });

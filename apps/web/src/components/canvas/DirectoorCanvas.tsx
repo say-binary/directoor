@@ -378,33 +378,64 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
     if (!container) return;
 
     const handleDragOver = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes("application/x-directoor-shape")) {
+      const types = e.dataTransfer?.types ?? [];
+      if (
+        types.includes("application/x-directoor-archetype") ||
+        types.includes("application/x-directoor-shape")
+      ) {
         e.preventDefault();
-        e.dataTransfer.dropEffect = "copy";
+        e.dataTransfer!.dropEffect = "copy";
       }
     };
 
     const handleDrop = async (e: DragEvent) => {
+      const archetype = e.dataTransfer?.getData("application/x-directoor-archetype");
       const semanticType = e.dataTransfer?.getData("application/x-directoor-shape");
-      if (!semanticType) return;
+      if (!archetype && !semanticType) return;
       e.preventDefault();
 
-      // Convert drop point from screen to canvas coords
       const canvasPoint = editor.screenToPage({ x: e.clientX, y: e.clientY });
+      const lib = await import("../sidebar/ShapeLibrary");
 
-      // Lazy-import to avoid pulling @directoor/core into the main bundle path twice
-      const { OBJECT_LIBRARY } = await import("@directoor/core");
-      const { createShapeFromDefinition } = await import("../sidebar/ShapeLibrary");
-
-      const def = OBJECT_LIBRARY[semanticType];
-      if (!def) return;
-
-      // Center the shape on the drop point
-      const position = {
-        x: canvasPoint.x - def.defaultSize.width / 2,
-        y: canvasPoint.y - def.defaultSize.height / 2,
-      };
-      createShapeFromDefinition(editor, def, position);
+      if (archetype) {
+        // New archetype-based drag: the sidebar sends one of the 9 iconShapes
+        // Defaults come from the static ARCHETYPE list; look them up by dropping through createArchetypeShape
+        // We keep a small inline table to avoid exporting ARCHETYPES
+        const defaults: Record<string, { w: number; h: number; stroke: string; fill: string; name: string }> = {
+          cylinder:  { w: 140, h: 80,  stroke: "#3B82F6", fill: "#EFF6FF", name: "Cylinder" },
+          hexagon:   { w: 130, h: 110, stroke: "#16A34A", fill: "#F0FDF4", name: "Hexagon" },
+          actor:     { w: 100, h: 110, stroke: "#E11D48", fill: "#FFF1F2", name: "User" },
+          cloud:     { w: 150, h: 85,  stroke: "#94A3B8", fill: "#F8FAFC", name: "Cloud" },
+          document:  { w: 110, h: 130, stroke: "#475569", fill: "#F1F5F9", name: "Document" },
+          stack:     { w: 130, h: 100, stroke: "#D97706", fill: "#FEF3C7", name: "Stack" },
+          rectangle: { w: 140, h: 80,  stroke: "#334155", fill: "#FFFFFF", name: "Rectangle" },
+          circle:    { w: 100, h: 100, stroke: "#CBD5E1", fill: "#F8FAFC", name: "Circle" },
+          diamond:   { w: 110, h: 100, stroke: "#D97706", fill: "#FEF3C7", name: "Decision" },
+        };
+        const d = defaults[archetype];
+        if (!d) return;
+        lib.createArchetypeShape(editor, {
+          iconShape: archetype as never,
+          displayName: d.name,
+          exampleUses: [],
+          defaultWidth: d.w,
+          defaultHeight: d.h,
+          defaultStroke: d.stroke,
+          defaultFill: d.fill,
+        }, {
+          x: canvasPoint.x - d.w / 2,
+          y: canvasPoint.y - d.h / 2,
+        });
+      } else if (semanticType) {
+        // Legacy semantic-type drag (kept for back-compat)
+        const { OBJECT_LIBRARY } = await import("@directoor/core");
+        const def = OBJECT_LIBRARY[semanticType];
+        if (!def) return;
+        lib.createShapeFromDefinition(editor, def, {
+          x: canvasPoint.x - def.defaultSize.width / 2,
+          y: canvasPoint.y - def.defaultSize.height / 2,
+        });
+      }
     };
 
     container.addEventListener("dragover", handleDragOver);
