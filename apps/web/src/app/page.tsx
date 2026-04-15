@@ -1,0 +1,145 @@
+"use client";
+
+import { useState, useCallback, useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
+import { useAuth } from "@/components/auth/AuthProvider";
+import { LoginScreen } from "@/components/auth/LoginScreen";
+import { Sidebar } from "@/components/sidebar/Sidebar";
+import { supabase } from "@/lib/supabase";
+
+const DirectoorCanvas = dynamic(
+  () =>
+    import("@/components/canvas/DirectoorCanvas").then(
+      (mod) => mod.DirectoorCanvas,
+    ),
+  { ssr: false },
+);
+
+export default function Home() {
+  const { user, loading } = useAuth();
+  const isDev = process.env.NODE_ENV === "development";
+  const [devBypass, setDevBypass] = useState(false);
+
+  const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
+  const [canvasReady, setCanvasReady] = useState(false);
+
+  // Ref to the save function exposed by DirectoorCanvas
+  const saveFnRef = useRef<(() => Promise<void>) | null>(null);
+
+  const isAuthenticated = !!user || devBypass;
+
+  // On login, load most recent canvas or create new
+  useEffect(() => {
+    if (!isAuthenticated || !user) return;
+
+    const initCanvas = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("canvases")
+          .select("id")
+          .order("updated_at", { ascending: false })
+          .limit(1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          setCurrentCanvasId(data[0]!.id);
+        } else {
+          await createNewCanvas();
+        }
+      } catch (err) {
+        console.error("Failed to init canvas:", err);
+      }
+      setCanvasReady(true);
+    };
+
+    initCanvas();
+  }, [isAuthenticated, user]);
+
+  useEffect(() => {
+    if (devBypass && !user) setCanvasReady(true);
+  }, [devBypass, user]);
+
+  const createNewCanvas = useCallback(async () => {
+    if (!user) {
+      setCurrentCanvasId(`dev-${Date.now()}`);
+      return;
+    }
+
+    // Save current canvas first
+    if (saveFnRef.current) {
+      await saveFnRef.current();
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("canvases")
+        .insert({
+          user_id: user.id,
+          title: "Untitled Canvas",
+          canvas_state: {},
+        })
+        .select("id")
+        .single();
+
+      if (error) throw error;
+      setCurrentCanvasId(data.id);
+    } catch (err) {
+      console.error("Failed to create canvas:", err);
+    }
+  }, [user]);
+
+  const handleSelectCanvas = useCallback(async (id: string) => {
+    if (id === currentCanvasId) return;
+
+    // Save current canvas before switching
+    if (saveFnRef.current) {
+      await saveFnRef.current();
+    }
+
+    setCurrentCanvasId(id);
+  }, [currentCanvasId]);
+
+  const handleSaveReady = useCallback((fn: () => Promise<void>) => {
+    saveFnRef.current = fn;
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginScreen onDevBypass={isDev ? () => setDevBypass(true) : undefined} />;
+  }
+
+  return (
+    <div className="flex h-full w-full">
+      {user && (
+        <Sidebar
+          currentCanvasId={currentCanvasId}
+          onSelectCanvas={handleSelectCanvas}
+          onNewCanvas={createNewCanvas}
+        />
+      )}
+
+      <main className="h-full flex-1">
+        {canvasReady || devBypass ? (
+          <DirectoorCanvas
+            key={currentCanvasId ?? "default"}
+            canvasId={currentCanvasId}
+            userId={user?.id}
+            onSaveReady={handleSaveReady}
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-blue-500" />
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
