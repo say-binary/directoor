@@ -2,7 +2,9 @@
 # Directoor Desktop Launcher
 # Double-click → dialog → starts dev server → opens browser → auto-shutdown on idle/close
 
-set -e
+# IMPORTANT: do NOT use `set -e` — when launched from Finder there is no terminal,
+# so any silent failure makes the app appear to do nothing. We handle errors via
+# explicit checks and surface them via osascript dialogs.
 
 # ─── Configuration ────────────────────────────────────────────────
 PROJECT_DIR="/Users/ashishagnihotri/Documents/Claude_Code/Directoor"
@@ -12,48 +14,57 @@ PID_FILE="/tmp/directoor-server.pid"
 LOG_FILE="/tmp/directoor-server.log"
 HEARTBEAT_FILE="/tmp/directoor-heartbeat"
 WATCHDOG_PID_FILE="/tmp/directoor-watchdog.pid"
-IDLE_TIMEOUT_SEC=900   # 15 minutes
-HEARTBEAT_STALE_SEC=60 # Browser closed if no heartbeat for 60s
+HEARTBEAT_STALE_SEC=60
 
-# ─── Find pnpm (it's not in PATH for double-clicked apps) ─────────
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
-# Source common shell init files to pick up node/pnpm paths
-[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null || true
-[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
-
-if ! command -v pnpm &>/dev/null; then
-    osascript -e 'display dialog "pnpm not found in PATH. Please install Node.js and pnpm first.\n\nRun: npm install -g pnpm" buttons {"OK"} default button 1 with icon stop with title "Directoor"'
+# Trap any unexpected error and surface it
+show_error() {
+    osascript -e "display dialog \"Directoor failed to launch:\n\n$1\" buttons {\"OK\"} default button 1 with icon stop with title \"Directoor\""
     exit 1
+}
+
+# ─── Find pnpm (NOT in PATH for double-clicked apps) ──────────────
+# Finder launches apps with a minimal PATH — must explicitly add common locations.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+
+# Try to load nvm if it exists (common Node setup)
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    . "$HOME/.nvm/nvm.sh" 2>/dev/null || true
 fi
 
-# ─── Helper: check if server is already running ───────────────────
+if ! command -v pnpm >/dev/null 2>&1; then
+    PATH_DUMP=$(echo "$PATH" | tr ':' '\n' | head -10 | tr '\n' '|')
+    show_error "pnpm not found.\n\nSearched PATH: ${PATH_DUMP}\n\nInstall: npm install -g pnpm"
+fi
+
+if [ ! -d "$PROJECT_DIR" ]; then
+    show_error "Project directory not found:\n$PROJECT_DIR"
+fi
+
+# ─── Helpers ──────────────────────────────────────────────────────
 is_server_running() {
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        return 0
-    fi
-    if curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/api/heartbeat" 2>/dev/null | grep -q "200"; then
+    if curl -s -o /dev/null -w "%{http_code}" --max-time 2 "${APP_URL}/api/heartbeat" 2>/dev/null | grep -q "200"; then
         return 0
     fi
     return 1
 }
 
-# ─── Helper: stop server cleanly ──────────────────────────────────
 stop_server() {
     if [ -f "$PID_FILE" ]; then
         SERVER_PID=$(cat "$PID_FILE")
         kill "$SERVER_PID" 2>/dev/null || true
-        # Kill any pnpm/node children too
         pkill -P "$SERVER_PID" 2>/dev/null || true
         rm -f "$PID_FILE"
     fi
-    # Belt and suspenders: kill anything on port 3000
-    lsof -ti :"$PORT" | xargs kill -9 2>/dev/null || true
+    lsof -ti :"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null || true
     rm -f "$HEARTBEAT_FILE"
 }
 
 # ─── Show launch dialog ───────────────────────────────────────────
-DIALOG_RESULT=$(osascript <<EOF
-display dialog "Launch Directoor in your browser?\n\nThe app will run locally and shut down automatically when you close the browser or after 15 minutes of inactivity." \
+DIALOG_RESULT=$(osascript <<'EOF' 2>/dev/null
+display dialog "Launch Directoor in your browser?
+
+The app will run locally and shut down automatically when you close the browser or after 15 minutes of inactivity." \
     buttons {"Cancel", "Launch"} \
     default button "Launch" \
     with icon note \
@@ -65,29 +76,38 @@ if [[ ! "$DIALOG_RESULT" == *"Launch"* ]]; then
     exit 0
 fi
 
-# ─── Stop any existing server first ───────────────────────────────
+# ─── If already running, just open the browser ────────────────────
 if is_server_running; then
-    # Just open the browser to the existing instance
     open "$APP_URL"
     exit 0
 fi
 
-# ─── Start the dev server in background ───────────────────────────
-cd "$PROJECT_DIR"
+# ─── Stop any zombie processes from a previous run ────────────────
+stop_server
+
+# ─── Start the dev server ─────────────────────────────────────────
+cd "$PROJECT_DIR" || show_error "Could not cd to $PROJECT_DIR"
 
 # Initialize heartbeat so watchdog has something to read while server starts
 date +%s > "$HEARTBEAT_FILE"
 
-# Start server detached, capture PID
+# Start server detached
 nohup pnpm dev >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 
-# ─── Wait for server to be ready ──────────────────────────────────
+# Verify the process actually started
+sleep 1
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    LAST_LOG=$(tail -20 "$LOG_FILE" 2>/dev/null | head -c 500)
+    show_error "pnpm dev failed to start.\n\nLog:\n${LAST_LOG}"
+fi
+
+# ─── Wait for server to respond ───────────────────────────────────
 WAIT_COUNT=0
 MAX_WAIT=60
 while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/api/heartbeat" 2>/dev/null | grep -q "200"; then
+    if is_server_running; then
         break
     fi
     sleep 1
@@ -95,9 +115,9 @@ while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
 done
 
 if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
-    osascript -e "display dialog \"Server failed to start. Check log: $LOG_FILE\" buttons {\"OK\"} default button 1 with icon stop with title \"Directoor\""
+    LAST_LOG=$(tail -20 "$LOG_FILE" 2>/dev/null | head -c 500)
     stop_server
-    exit 1
+    show_error "Server did not respond within ${MAX_WAIT}s.\n\nLog:\n${LAST_LOG}"
 fi
 
 # ─── Open the app in default browser ──────────────────────────────
