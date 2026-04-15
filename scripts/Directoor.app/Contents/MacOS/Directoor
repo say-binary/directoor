@@ -1,0 +1,113 @@
+#!/bin/bash
+# Directoor Desktop Launcher
+# Double-click → dialog → starts dev server → opens browser → auto-shutdown on idle/close
+
+set -e
+
+# ─── Configuration ────────────────────────────────────────────────
+PROJECT_DIR="/Users/ashishagnihotri/Documents/Claude_Code/Directoor"
+PORT=3000
+APP_URL="http://localhost:${PORT}"
+PID_FILE="/tmp/directoor-server.pid"
+LOG_FILE="/tmp/directoor-server.log"
+HEARTBEAT_FILE="/tmp/directoor-heartbeat"
+WATCHDOG_PID_FILE="/tmp/directoor-watchdog.pid"
+IDLE_TIMEOUT_SEC=900   # 15 minutes
+HEARTBEAT_STALE_SEC=60 # Browser closed if no heartbeat for 60s
+
+# ─── Find pnpm (it's not in PATH for double-clicked apps) ─────────
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+# Source common shell init files to pick up node/pnpm paths
+[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null || true
+[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+
+if ! command -v pnpm &>/dev/null; then
+    osascript -e 'display dialog "pnpm not found in PATH. Please install Node.js and pnpm first.\n\nRun: npm install -g pnpm" buttons {"OK"} default button 1 with icon stop with title "Directoor"'
+    exit 1
+fi
+
+# ─── Helper: check if server is already running ───────────────────
+is_server_running() {
+    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        return 0
+    fi
+    if curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/api/heartbeat" 2>/dev/null | grep -q "200"; then
+        return 0
+    fi
+    return 1
+}
+
+# ─── Helper: stop server cleanly ──────────────────────────────────
+stop_server() {
+    if [ -f "$PID_FILE" ]; then
+        SERVER_PID=$(cat "$PID_FILE")
+        kill "$SERVER_PID" 2>/dev/null || true
+        # Kill any pnpm/node children too
+        pkill -P "$SERVER_PID" 2>/dev/null || true
+        rm -f "$PID_FILE"
+    fi
+    # Belt and suspenders: kill anything on port 3000
+    lsof -ti :"$PORT" | xargs kill -9 2>/dev/null || true
+    rm -f "$HEARTBEAT_FILE"
+}
+
+# ─── Show launch dialog ───────────────────────────────────────────
+DIALOG_RESULT=$(osascript <<EOF
+display dialog "Launch Directoor in your browser?\n\nThe app will run locally and shut down automatically when you close the browser or after 15 minutes of inactivity." \
+    buttons {"Cancel", "Launch"} \
+    default button "Launch" \
+    with icon note \
+    with title "Directoor"
+EOF
+)
+
+if [[ ! "$DIALOG_RESULT" == *"Launch"* ]]; then
+    exit 0
+fi
+
+# ─── Stop any existing server first ───────────────────────────────
+if is_server_running; then
+    # Just open the browser to the existing instance
+    open "$APP_URL"
+    exit 0
+fi
+
+# ─── Start the dev server in background ───────────────────────────
+cd "$PROJECT_DIR"
+
+# Initialize heartbeat so watchdog has something to read while server starts
+date +%s > "$HEARTBEAT_FILE"
+
+# Start server detached, capture PID
+nohup pnpm dev >"$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+echo "$SERVER_PID" > "$PID_FILE"
+
+# ─── Wait for server to be ready ──────────────────────────────────
+WAIT_COUNT=0
+MAX_WAIT=60
+while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
+    if curl -s -o /dev/null -w "%{http_code}" "${APP_URL}/api/heartbeat" 2>/dev/null | grep -q "200"; then
+        break
+    fi
+    sleep 1
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+done
+
+if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+    osascript -e "display dialog \"Server failed to start. Check log: $LOG_FILE\" buttons {\"OK\"} default button 1 with icon stop with title \"Directoor\""
+    stop_server
+    exit 1
+fi
+
+# ─── Open the app in default browser ──────────────────────────────
+open "$APP_URL"
+
+# ─── Start watchdog in background ─────────────────────────────────
+WATCHDOG_SCRIPT="$PROJECT_DIR/scripts/watchdog.sh"
+if [ -x "$WATCHDOG_SCRIPT" ]; then
+    nohup "$WATCHDOG_SCRIPT" >>"$LOG_FILE" 2>&1 &
+    echo "$!" > "$WATCHDOG_PID_FILE"
+fi
+
+exit 0
