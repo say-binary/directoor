@@ -124,6 +124,17 @@ function createInitialCanvasState(canvasId?: string, userId?: string): CanvasSta
 
 // ─── Action Processor ────────────────────────────────────────────────
 
+/**
+ * Coerce any input (array, string, undefined, null) into a string[].
+ * Used to guard against malformed payloads from the LLM where `ids`
+ * might arrive as a single string, undefined, or null.
+ */
+function asIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v) => typeof v === 'string');
+  if (typeof value === 'string') return [value];
+  return [];
+}
+
 function processAction(
   state: CanvasState,
   action: CanvasAction,
@@ -270,7 +281,8 @@ function processAction(
     }
 
     case 'MOVE': {
-      const { ids, delta } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { delta } = action.payload;
       const updatedObjects = { ...state.objects };
       for (const id of ids) {
         const obj = updatedObjects[id];
@@ -315,7 +327,8 @@ function processAction(
     }
 
     case 'ALIGN': {
-      const { ids, alignment } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { alignment } = action.payload;
       const objectsToAlign = ids
         .map(id => state.objects[id])
         .filter((o): o is CanvasObjectBase => o !== undefined);
@@ -375,7 +388,8 @@ function processAction(
     }
 
     case 'DISTRIBUTE': {
-      const { ids, direction } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { direction } = action.payload;
       const objectsToDistribute = ids
         .map(id => state.objects[id])
         .filter((o): o is CanvasObjectBase => o !== undefined);
@@ -412,7 +426,8 @@ function processAction(
     }
 
     case 'SET_STYLE': {
-      const { ids, style } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { style } = action.payload;
       const updatedObjects = { ...state.objects };
       for (const id of ids) {
         const obj = updatedObjects[id];
@@ -430,7 +445,8 @@ function processAction(
     }
 
     case 'SET_CONNECTION_STYLE': {
-      const { ids, style } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { style } = action.payload;
       const updatedConnections = { ...state.connections };
       for (const id of ids) {
         const conn = updatedConnections[id];
@@ -528,7 +544,7 @@ function processAction(
     case 'DUPLICATE': {
       const updatedObjects = { ...state.objects };
       const updatedConnections = { ...state.connections };
-      for (const sourceId of action.payload.ids) {
+      for (const sourceId of asIds(action.payload.ids)) {
         const obj = state.objects[sourceId];
         if (obj) {
           const newId = nanoid();
@@ -553,7 +569,7 @@ function processAction(
 
     case 'LOCK': {
       const updatedObjects = { ...state.objects };
-      for (const id of action.payload.ids) {
+      for (const id of asIds(action.payload.ids)) {
         if (updatedObjects[id]) {
           previousState[id] = { ...updatedObjects[id] };
           updatedObjects[id] = { ...updatedObjects[id]!, locked: true, updatedAt: now };
@@ -565,7 +581,7 @@ function processAction(
 
     case 'UNLOCK': {
       const updatedObjects = { ...state.objects };
-      for (const id of action.payload.ids) {
+      for (const id of asIds(action.payload.ids)) {
         if (updatedObjects[id]) {
           previousState[id] = { ...updatedObjects[id] };
           updatedObjects[id] = { ...updatedObjects[id]!, locked: false, updatedAt: now };
@@ -576,7 +592,8 @@ function processAction(
     }
 
     case 'SET_VISIBILITY': {
-      const { ids, visible } = action.payload;
+      const ids = asIds(action.payload.ids);
+      const { visible } = action.payload;
       const updatedObjects = { ...state.objects };
       const updatedConnections = { ...state.connections };
       for (const id of ids) {
@@ -640,7 +657,7 @@ function processAction(
 
     case 'SELECT': {
       previousState['selectedIds'] = [...state.selectedIds];
-      newState.selectedIds = action.payload.ids;
+      newState.selectedIds = asIds(action.payload.ids);
       break;
     }
 

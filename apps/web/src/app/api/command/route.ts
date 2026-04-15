@@ -20,9 +20,11 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
-const MODEL = "claude-haiku-4-5-20251001";
-// Haiku 4.5 supports up to 64K output tokens. Architecture diagrams with
-// 15-25 components can run 10-15K tokens of JSON, so we need ample budget.
+// Claude Sonnet 4.6 — significantly better at structured JSON output and
+// complex architectural reasoning than Haiku. Worth the ~5x cost premium
+// because it produces more reliable diagrams with correct semantic types
+// and valid ids arrays (no more "ids is not iterable" runtime errors).
+const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 16384;
 const PLANNER_MAX_TOKENS = 4096;
 
