@@ -23,6 +23,9 @@ export default function Home() {
   const [currentCanvasId, setCurrentCanvasId] = useState<string | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
 
+  // Editor instance shared between Canvas and Sidebar (for shape library)
+  const [editor, setEditor] = useState<import("tldraw").Editor | null>(null);
+
   // Ref to the save function exposed by DirectoorCanvas
   const saveFnRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -123,6 +126,7 @@ export default function Home() {
           currentCanvasId={currentCanvasId}
           onSelectCanvas={handleSelectCanvas}
           onNewCanvas={createNewCanvas}
+          editor={editor}
         />
       )}
 
@@ -132,6 +136,7 @@ export default function Home() {
             key={currentCanvasId ?? "default"}
             canvasId={currentCanvasId}
             userId={user?.id}
+            onEditorReady={setEditor}
             onSaveReady={handleSaveReady}
           />
         ) : (

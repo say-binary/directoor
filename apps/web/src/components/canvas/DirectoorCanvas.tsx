@@ -30,9 +30,11 @@ interface DirectoorCanvasProps {
   userId?: string;
   /** Called when save function is ready — parent uses this to save before switching */
   onSaveReady?: (saveFn: () => Promise<void>) => void;
+  /** Called when the tldraw editor is ready — parent uses this for sidebar shape library */
+  onEditorReady?: (editor: Editor) => void;
 }
 
-export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanvasProps) {
+export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }: DirectoorCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [store] = useState(() => createCanvasStore(canvasId ?? undefined, userId));
 
@@ -55,7 +57,8 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
     editorInstance.updateInstanceState({ isGridMode: true });
-  }, []);
+    onEditorReady?.(editorInstance);
+  }, [onEditorReady]);
 
   // ─── Auto-save with race-condition protection ────────────────
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -365,6 +368,51 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
         container.removeEventListener("pointerdown", handlePointerDown as EventListener, true);
       };
     }
+  }, [editor]);
+
+  // ─── Drag-and-drop from sidebar shape library ───────────────
+  useEffect(() => {
+    if (!editor) return;
+
+    const container = document.querySelector(".tldraw-container") as HTMLElement | null;
+    if (!container) return;
+
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("application/x-directoor-shape")) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }
+    };
+
+    const handleDrop = async (e: DragEvent) => {
+      const semanticType = e.dataTransfer?.getData("application/x-directoor-shape");
+      if (!semanticType) return;
+      e.preventDefault();
+
+      // Convert drop point from screen to canvas coords
+      const canvasPoint = editor.screenToPage({ x: e.clientX, y: e.clientY });
+
+      // Lazy-import to avoid pulling @directoor/core into the main bundle path twice
+      const { OBJECT_LIBRARY } = await import("@directoor/core");
+      const { createShapeFromDefinition } = await import("../sidebar/ShapeLibrary");
+
+      const def = OBJECT_LIBRARY[semanticType];
+      if (!def) return;
+
+      // Center the shape on the drop point
+      const position = {
+        x: canvasPoint.x - def.defaultSize.width / 2,
+        y: canvasPoint.y - def.defaultSize.height / 2,
+      };
+      createShapeFromDefinition(editor, def, position);
+    };
+
+    container.addEventListener("dragover", handleDragOver);
+    container.addEventListener("drop", handleDrop);
+    return () => {
+      container.removeEventListener("dragover", handleDragOver);
+      container.removeEventListener("drop", handleDrop);
+    };
   }, [editor]);
 
   // Create a new animation region from current selection

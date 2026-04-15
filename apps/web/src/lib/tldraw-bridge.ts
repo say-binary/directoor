@@ -138,8 +138,9 @@ function executeAction(
 ): void {
   switch (action.type) {
     case "CREATE_OBJECT": {
-      // Get LLM-assigned ID from metadata before dispatching
-      const llmId = (action.payload.metadata as Record<string, unknown>)?._llmId as string | undefined;
+      // Get LLM-assigned ID — check both _llmId (normalized) and id (raw fallback)
+      const md = action.payload.metadata as Record<string, unknown>;
+      const llmId = (md?._llmId as string) ?? (md?.id as string) ?? undefined;
 
       // Dispatch to store (generates real ID)
       store.getState().dispatch(action, "ai-llm");
@@ -241,7 +242,8 @@ function executeAction(
     }
 
     case "CREATE_CONNECTION": {
-      const llmId = (action.payload.metadata as Record<string, unknown>)?._llmId as string | undefined;
+      const md = action.payload.metadata as Record<string, unknown>;
+      const llmId = (md?._llmId as string) ?? (md?.id as string) ?? undefined;
 
       // Resolve LLM IDs to real store IDs for the endpoints
       const resolvedFromId = resolveId(action.payload.fromObjectId);

@@ -226,8 +226,13 @@ function normalizeActions(rawActions: Record<string, unknown>[]): CanvasAction[]
             visible: (payload.visible as boolean) ?? true,
             metadata: {
               ...(payload.metadata as Record<string, unknown> ?? {}),
-              // Preserve the LLM-assigned ID for cross-referencing
-              _llmId: (payload.id as string) ?? (raw.id as string) ?? undefined,
+              // Preserve the LLM-assigned ID for cross-referencing.
+              // The LLM may put the id in multiple places — try all sources.
+              _llmId:
+                ((payload.metadata as Record<string, unknown>)?.id as string) ??
+                (payload.id as string) ??
+                (raw.id as string) ??
+                undefined,
             },
           },
         } as CanvasAction);
@@ -265,7 +270,11 @@ function normalizeActions(rawActions: Record<string, unknown>[]): CanvasAction[]
             locked: (payload.locked as boolean) ?? false,
             visible: (payload.visible as boolean) ?? true,
             metadata: {
-              _llmId: (payload.id as string) ?? (raw.id as string) ?? undefined,
+              _llmId:
+                ((payload.metadata as Record<string, unknown>)?.id as string) ??
+                (payload.id as string) ??
+                (raw.id as string) ??
+                undefined,
             },
           },
         } as CanvasAction);
