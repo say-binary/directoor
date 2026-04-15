@@ -8,6 +8,7 @@ export type {
   Bounds,
   Color,
   SemanticType,
+  IconShape,
   ConnectionType,
   LineStyle,
   ArrowPath,
@@ -45,4 +46,5 @@ export {
   OBJECT_LIBRARY,
   findObjectByAlias,
   getObjectsByCategory,
+  getIconShape,
 } from './object-library';

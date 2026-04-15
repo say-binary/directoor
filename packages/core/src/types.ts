@@ -28,9 +28,10 @@ export type Color = string; // hex (#RRGGBB) or CSS color
  * what the user is working with — not just "a rectangle."
  */
 export type SemanticType =
-  // Architecture diagram objects
+  // ─── Architecture core ─────────────────────────────────
   | 'database'
   | 'service'
+  | 'microservice'
   | 'queue'
   | 'cache'
   | 'api-gateway'
@@ -42,15 +43,94 @@ export type SemanticType =
   | 'container'
   | 'user-actor'
   | 'external-system'
-  | 'microservice'
   | 'generic-box'
-  // Primitives
+  // ─── Streaming & messaging ─────────────────────────────
+  | 'kafka-broker'
+  | 'kafka-topic'
+  | 'kafka-producer'
+  | 'kafka-consumer'
+  | 'consumer-group'
+  | 'partition'
+  | 'zookeeper'
+  | 'rabbitmq-exchange'
+  | 'rabbitmq-queue'
+  | 'pulsar'
+  | 'nats'
+  | 'event-bus'
+  | 'webhook'
+  // ─── Compute ───────────────────────────────────────────
+  | 'kubernetes-pod'
+  | 'k8s-deployment'
+  | 'k8s-service'
+  | 'k8s-ingress'
+  | 'lambda'
+  | 'step-function'
+  | 'cron-job'
+  | 'worker'
+  | 'ecs-task'
+  | 'fargate'
+  | 'ec2-instance'
+  // ─── Data & analytics ──────────────────────────────────
+  | 'snowflake'
+  | 'bigquery'
+  | 'redshift'
+  | 'clickhouse'
+  | 'elasticsearch'
+  | 'vector-db'
+  | 'etl-pipeline'
+  | 'stream-processor'
+  | 'materialized-view'
+  // ─── Networking ────────────────────────────────────────
+  | 'vpc'
+  | 'subnet'
+  | 'internet-gateway'
+  | 'nat-gateway'
+  | 'dns'
+  | 'cdn'
+  | 'waf'
+  | 'vpn'
+  | 'service-mesh'
+  // ─── Auth & identity ───────────────────────────────────
+  | 'auth-service'
+  | 'jwt-token'
+  | 'oauth-provider'
+  | 'iam-role'
+  | 'secret-manager'
+  | 'vault'
+  // ─── Observability ─────────────────────────────────────
+  | 'metrics-store'
+  | 'log-aggregator'
+  | 'trace-collector'
+  | 'observability-platform'
+  | 'alerting'
+  // ─── Frontend ──────────────────────────────────────────
+  | 'web-app'
+  | 'mobile-app'
+  | 'browser'
+  | 'pwa'
+  | 'service-worker'
+  // ─── Primitives ────────────────────────────────────────
   | 'rectangle'
   | 'circle'
   | 'diamond'
   | 'text'
   | 'sticky-note'
   | 'image';
+
+/**
+ * Visual archetype for rendering. Multiple semantic types map to the
+ * same icon shape (e.g., database, topic, snowflake → 'cylinder').
+ */
+export type IconShape =
+  | 'rectangle'   // Default — colored box
+  | 'cylinder'    // Databases, topics, storage
+  | 'hexagon'     // Microservices, service mesh
+  | 'actor'       // People, users, producers, consumers
+  | 'cloud'       // Managed/external cloud services
+  | 'document'    // Logs, files, reports
+  | 'stack'       // Brokers, clusters, replicated compute
+  | 'circle'
+  | 'diamond';
 
 /** Arrow/connection types */
 export type ConnectionType = 'arrow' | 'line';
@@ -362,7 +442,19 @@ export interface SemanticObjectDefinition {
   /** Short description */
   description: string;
   /** Category for library panel grouping */
-  category: 'architecture' | 'primitive' | 'custom';
+  category:
+    | 'architecture'
+    | 'streaming'
+    | 'compute'
+    | 'data'
+    | 'networking'
+    | 'auth'
+    | 'observability'
+    | 'frontend'
+    | 'primitive'
+    | 'custom';
+  /** Visual archetype — drives the renderer choice in the bridge */
+  iconShape: IconShape;
   /** Default visual style */
   defaultStyle: ObjectStyle;
   /** Default size */

@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from "react";
 import { Tldraw, Editor, TLShapeId, TLComponents } from "tldraw";
+import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
 
 // Hide tldraw UI elements we don't need
 const hiddenComponents: TLComponents = {
@@ -446,7 +447,11 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
 
   return (
     <div className="tldraw-container">
-      <Tldraw onMount={handleMount} components={hiddenComponents} />
+      <Tldraw
+        onMount={handleMount}
+        components={hiddenComponents}
+        shapeUtils={DIRECTOOR_SHAPE_UTILS}
+      />
 
       {/* "Animate" button when shapes are selected (only if not already in a region) */}
       {selectedShapeIds.length >= 1 && editor && (

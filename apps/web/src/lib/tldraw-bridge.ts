@@ -20,10 +20,9 @@ import {
   TLTextShape,
   TLNoteShape,
 } from "tldraw";
-import type {
-  CanvasAction,
-  SemanticType,
-} from "@directoor/core";
+import type { CanvasAction, SemanticType } from "@directoor/core";
+import { getIconShape } from "@directoor/core";
+import { iconShapeToTldrawType } from "@/components/canvas/shapes/DirectoorShapes";
 
 /** Convert plain text to tldraw's richText format (ProseMirror doc) */
 function toRichText(text: string) {
@@ -187,35 +186,56 @@ function executeAction(
           },
         });
       } else {
-        // Determine if this is an architecture object (should look professional)
-        const isArchObject = obj.semanticType !== "rectangle" &&
-          obj.semanticType !== "circle" &&
-          obj.semanticType !== "diamond";
+        // Decide between custom Directoor shape vs. native tldraw geo shape
+        const iconShape = getIconShape(obj.semanticType);
+        const customType = iconShapeToTldrawType(iconShape);
 
-        editor.createShape<TLGeoShape>({
-          id: tlId,
-          type: "geo",
-          x: obj.position.x,
-          y: obj.position.y,
-          props: {
-            w: obj.size.width,
-            h: obj.size.height,
-            geo: semanticTypeToGeo(obj.semanticType),
-            color: semanticTypeToColor(obj.semanticType),
-            richText: toRichText(obj.label),
-            size: "m",
-            font: "sans",
-            // CRITICAL: "solid" for clean professional look, never "draw" (sketchy)
-            dash:
-              obj.style.strokeStyle === "dashed"
-                ? "dashed"
-                : obj.style.strokeStyle === "dotted"
-                  ? "dotted"
-                  : "solid",
-            // Architecture objects always get semi-fill for colored backgrounds
-            fill: isArchObject ? "semi" : "none",
-          },
-        });
+        if (customType) {
+          // Use one of our 6 custom shape utils (cylinder/hexagon/actor/cloud/document/stack)
+          editor.createShape({
+            id: tlId,
+            type: customType,
+            x: obj.position.x,
+            y: obj.position.y,
+            props: {
+              w: obj.size.width,
+              h: obj.size.height,
+              label: obj.label,
+              color: obj.style.stroke,
+              fill: obj.style.fill === "transparent" ? "#FFFFFF" : obj.style.fill,
+              dash: obj.style.strokeStyle,
+            },
+          });
+        } else {
+          // Native tldraw geo shape (rectangle, circle, diamond, generic-box, etc.)
+          const isArchObject =
+            obj.semanticType !== "rectangle" &&
+            obj.semanticType !== "circle" &&
+            obj.semanticType !== "diamond";
+
+          editor.createShape<TLGeoShape>({
+            id: tlId,
+            type: "geo",
+            x: obj.position.x,
+            y: obj.position.y,
+            props: {
+              w: obj.size.width,
+              h: obj.size.height,
+              geo: semanticTypeToGeo(obj.semanticType),
+              color: semanticTypeToColor(obj.semanticType),
+              richText: toRichText(obj.label),
+              size: "m",
+              font: "sans",
+              dash:
+                obj.style.strokeStyle === "dashed"
+                  ? "dashed"
+                  : obj.style.strokeStyle === "dotted"
+                    ? "dotted"
+                    : "solid",
+              fill: isArchObject ? "semi" : "none",
+            },
+          });
+        }
       }
       break;
     }
