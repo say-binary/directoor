@@ -56,7 +56,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
     editorInstance.updateInstanceState({ isGridMode: true });
   }, []);
 
-  // ─── Auto-save ───────────────────────────────────────────────
+  // ─── Auto-save with race-condition protection ────────────────
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<string>("");
   const animationRegionsRef = useRef(animationRegions);
@@ -66,11 +66,32 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
   const canvasIdRef = useRef(canvasId);
   canvasIdRef.current = canvasId;
 
-  // Core save function — can be called immediately or debounced
+  // CRITICAL: blocks ALL saves until load completes for THIS canvasId.
+  // Without this, the save effects fire on mount and overwrite the DB
+  // with an empty snapshot before the load completes.
+  const hasLoadedRef = useRef(false);
+  // Reset load flag when canvasId changes (we're switching canvases)
+  useEffect(() => {
+    hasLoadedRef.current = false;
+    lastSavedRef.current = "";
+  }, [canvasId]);
+
+  /**
+   * Core save function. Multiple safety layers:
+   * 1. No save before load completes (hasLoadedRef gate)
+   * 2. No-op if nothing changed (lastSavedRef compare)
+   * 3. Server-side empty-write guard (in /api/save-canvas) refuses to
+   *    overwrite a non-empty canvas with empty data.
+   */
   const doSave = useCallback(async () => {
     const ed = editorRef.current;
     const cid = canvasIdRef.current;
     if (!ed || !cid || cid.startsWith("dev-")) return;
+
+    // GUARD: don't save before load completes
+    if (!hasLoadedRef.current) {
+      return;
+    }
 
     try {
       const snapshot = ed.store.getStoreSnapshot();
@@ -88,19 +109,29 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
 
       const saveStr = JSON.stringify(savePayload);
       if (saveStr === lastSavedRef.current) return;
-      lastSavedRef.current = saveStr;
 
-      const objectCount = ed.getCurrentPageShapes().filter((s) => s.type !== "arrow").length;
-      const connectionCount = ed.getCurrentPageShapes().filter((s) => s.type === "arrow").length;
+      const allShapes = ed.getCurrentPageShapes();
+      const objectCount = allShapes.filter((s) => s.type !== "arrow").length;
+      const connectionCount = allShapes.filter((s) => s.type === "arrow").length;
 
-      await supabase
-        .from("canvases")
-        .update({
-          canvas_state: savePayload,
-          object_count: objectCount,
-          connection_count: connectionCount,
-        })
-        .eq("id", cid);
+      // Save via our API route (which has the empty-write safety check)
+      const res = await fetch("/api/save-canvas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          canvasId: cid,
+          canvasState: savePayload,
+          objectCount,
+          connectionCount,
+        }),
+      });
+
+      if (res.ok) {
+        lastSavedRef.current = saveStr;
+      } else {
+        const errBody = await res.json().catch(() => ({}));
+        console.warn("Save rejected:", errBody);
+      }
     } catch (err) {
       console.error("Auto-save failed:", err);
     }
@@ -123,6 +154,9 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
       const cid = canvasIdRef.current;
       if (!ed || !cid || cid.startsWith("dev-")) return;
 
+      // CRITICAL: don't save if load hasn't completed (would wipe DB)
+      if (!hasLoadedRef.current) return;
+
       const snapshot = ed.store.getStoreSnapshot();
       const regions = animationRegionsRef.current;
       const savePayload = {
@@ -132,10 +166,10 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
         })),
       };
 
-      const objectCount = ed.getCurrentPageShapes().filter((s) => s.type !== "arrow").length;
-      const connectionCount = ed.getCurrentPageShapes().filter((s) => s.type === "arrow").length;
+      const allShapes = ed.getCurrentPageShapes();
+      const objectCount = allShapes.filter((s) => s.type !== "arrow").length;
+      const connectionCount = allShapes.filter((s) => s.type === "arrow").length;
 
-      // sendBeacon to our own server-side API route (handles Supabase auth)
       navigator.sendBeacon(
         "/api/save-canvas",
         new Blob([JSON.stringify({
@@ -182,6 +216,8 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
   useEffect(() => {
     if (!editor || !canvasId || !userId || canvasId.startsWith("dev-")) return;
 
+    let cancelled = false;
+
     const loadCanvas = async () => {
       try {
         const { data, error } = await supabase
@@ -190,6 +226,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
           .eq("id", canvasId)
           .single();
 
+        if (cancelled) return;
         if (error) throw error;
 
         if (data?.canvas_state && typeof data.canvas_state === "object") {
@@ -222,9 +259,29 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady }: DirectoorCanv
 
       // Always re-enable grid after loading (loadStoreSnapshot can overwrite it)
       editor.updateInstanceState({ isGridMode: true });
+
+      // CRITICAL: only NOW allow saves to fire. Before this point, the
+      // tldraw snapshot is empty (just initialized) and would wipe the DB.
+      if (!cancelled) {
+        // Stamp lastSavedRef with the current snapshot so the first save
+        // doesn't immediately fire with the just-loaded data.
+        const initialSnapshot = editor.store.getStoreSnapshot();
+        const initialPayload = {
+          tldrawSnapshot: initialSnapshot,
+          animationRegions: animationRegionsRef.current.map((r) => ({
+            id: r.id, shapeIds: r.shapeIds, sequence: r.sequence, isLooping: r.isLooping,
+          })),
+        };
+        lastSavedRef.current = JSON.stringify(initialPayload);
+        hasLoadedRef.current = true;
+      }
     };
 
     loadCanvas();
+
+    return () => {
+      cancelled = true;
+    };
   }, [editor, canvasId, userId]);
 
   // Track tldraw selection changes
