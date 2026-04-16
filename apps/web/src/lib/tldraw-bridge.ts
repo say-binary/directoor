@@ -15,13 +15,11 @@ import {
   Editor,
   createShapeId,
   TLShapeId,
-  TLGeoShape,
-  TLArrowShape,
   TLTextShape,
   TLNoteShape,
 } from "tldraw";
-import type { CanvasAction, SemanticType } from "@directoor/core";
-import { getIconShape } from "@directoor/core";
+import type { CanvasAction } from "@directoor/core";
+import { resolveIconShape, defaultStyleForSemanticType } from "@directoor/core";
 import { iconShapeToTldrawType } from "@/components/canvas/shapes/DirectoorShapes";
 
 /** Convert plain text to tldraw's richText format (ProseMirror doc) */
@@ -32,6 +30,17 @@ function toRichText(text: string) {
     return { type: "paragraph", content: [{ type: "text", text: line }] };
   });
   return { type: "doc", content };
+}
+
+/** Coerce a TLShapeId to a string for use as a prop value */
+function tlIdAsString(id: TLShapeId | undefined): string {
+  return id ? (id as unknown as string) : "";
+}
+
+/** Map a connection-point id ("top"/"right"/...) to our arrow's anchor enum */
+function pointToAnchor(point: string): "top" | "right" | "bottom" | "left" | "auto" {
+  if (point === "top" || point === "bottom" || point === "left" || point === "right") return point;
+  return "auto";
 }
 
 // ─── ID Mapping ──────────────────────────────────────────────────────
@@ -61,55 +70,8 @@ function resolveTldrawId(id: string): TLShapeId | undefined {
   return storeToTldrawId.get(storeId);
 }
 
-// ─── Semantic Type Helpers ───────────────────────────────────────────
-
-function semanticTypeToGeo(
-  semanticType: SemanticType,
-): TLGeoShape["props"]["geo"] {
-  switch (semanticType) {
-    case "diamond":
-      return "diamond";
-    case "circle":
-      return "ellipse";
-    default:
-      return "rectangle";
-  }
-}
-
-function semanticTypeToColor(
-  semanticType: SemanticType,
-): TLGeoShape["props"]["color"] {
-  switch (semanticType) {
-    case "database":
-      return "blue";
-    case "service":
-    case "microservice":
-      return "green";
-    case "queue":
-      return "orange";
-    case "cache":
-      return "yellow";
-    case "api-gateway":
-      return "violet";
-    case "load-balancer":
-      return "light-green";
-    case "client":
-    case "user-actor":
-      return "red";
-    case "data-lake":
-      return "light-blue";
-    case "storage":
-      return "yellow";
-    case "function":
-      return "violet";
-    case "container":
-      return "grey";
-    case "external-system":
-      return "grey";
-    default:
-      return "black";
-  }
-}
+// (No tldraw geo/color helpers needed — every semantic type now
+//  routes through a Directoor custom shape with its own palette.)
 
 // ─── Main Entry Point ────────────────────────────────────────────────
 
@@ -187,56 +149,34 @@ function executeAction(
           },
         });
       } else {
-        // Decide between custom Directoor shape vs. native tldraw geo shape
-        const iconShape = getIconShape(obj.semanticType);
+        // Every semantic type routes through a Directoor custom shape.
+        // resolveIconShape handles novel types via heuristic, never falls back to tldraw geo.
+        const iconShape = resolveIconShape(obj.semanticType);
         const customType = iconShapeToTldrawType(iconShape);
+        const defaults = defaultStyleForSemanticType(obj.semanticType);
 
-        if (customType) {
-          // Use one of our 6 custom shape utils (cylinder/hexagon/actor/cloud/document/stack)
-          editor.createShape({
-            id: tlId,
-            type: customType,
-            x: obj.position.x,
-            y: obj.position.y,
-            props: {
-              w: obj.size.width,
-              h: obj.size.height,
-              label: obj.label,
-              color: obj.style.stroke,
-              fill: obj.style.fill === "transparent" ? "#FFFFFF" : obj.style.fill,
-              dash: obj.style.strokeStyle,
-            },
-          });
-        } else {
-          // Native tldraw geo shape (rectangle, circle, diamond, generic-box, etc.)
-          const isArchObject =
-            obj.semanticType !== "rectangle" &&
-            obj.semanticType !== "circle" &&
-            obj.semanticType !== "diamond";
+        // If the LLM gave us a custom color use it, else use our palette default
+        const stroke = obj.style.stroke && obj.style.stroke !== "#334155"
+          ? obj.style.stroke
+          : defaults.stroke;
+        const fill = obj.style.fill && obj.style.fill !== "transparent" && obj.style.fill !== "#FFFFFF"
+          ? obj.style.fill
+          : defaults.fill;
 
-          editor.createShape<TLGeoShape>({
-            id: tlId,
-            type: "geo",
-            x: obj.position.x,
-            y: obj.position.y,
-            props: {
-              w: obj.size.width,
-              h: obj.size.height,
-              geo: semanticTypeToGeo(obj.semanticType),
-              color: semanticTypeToColor(obj.semanticType),
-              richText: toRichText(obj.label),
-              size: "m",
-              font: "sans",
-              dash:
-                obj.style.strokeStyle === "dashed"
-                  ? "dashed"
-                  : obj.style.strokeStyle === "dotted"
-                    ? "dotted"
-                    : "solid",
-              fill: isArchObject ? "semi" : "none",
-            },
-          });
-        }
+        editor.createShape({
+          id: tlId,
+          type: customType,
+          x: obj.position.x,
+          y: obj.position.y,
+          props: {
+            w: obj.size.width,
+            h: obj.size.height,
+            label: obj.label,
+            color: stroke,
+            fill,
+            dash: obj.style.strokeStyle,
+          },
+        });
       }
       break;
     }
@@ -279,88 +219,38 @@ function executeAction(
       const fromTlId = storeToTldrawId.get(resolvedFromId);
       const toTlId = storeToTldrawId.get(resolvedToId);
 
-      if (fromTlId && toTlId) {
-        // Create bound arrow
-        editor.createShape<TLArrowShape>({
-          id: tlId,
-          type: "arrow",
-          props: {
-            text: conn.label || "",
-            color: "black",
-            size: "m",
-            dash:
-              conn.style.strokeStyle === "dashed"
-                ? "dashed"
-                : conn.style.strokeStyle === "dotted"
-                  ? "dotted"
-                  : "solid",
-            arrowheadEnd: conn.style.endHead === "none" ? "none" : "arrow",
-            arrowheadStart:
-              conn.style.startHead === "none" ? "none" : "arrow",
-          },
-        });
+      // Compute initial absolute endpoints from store object positions
+      const fromObj = store.getState().canvas.objects[resolvedFromId];
+      const toObj = store.getState().canvas.objects[resolvedToId];
 
-        // Bind arrow endpoints to shapes
-        editor.createBindings([
-          {
-            type: "arrow",
-            fromId: tlId,
-            toId: fromTlId,
-            props: {
-              terminal: "start",
-              isExact: false,
-              isPrecise: true,
-              normalizedAnchor: getAnchorForPoint(conn.fromPointId),
-            },
-          },
-          {
-            type: "arrow",
-            fromId: tlId,
-            toId: toTlId,
-            props: {
-              terminal: "end",
-              isExact: false,
-              isPrecise: true,
-              normalizedAnchor: getAnchorForPoint(conn.toPointId),
-            },
-          },
-        ]);
-      } else {
-        // Fallback: position-based arrow if we can't bind
-        const fromObj = store.getState().canvas.objects[resolvedFromId];
-        const toObj = store.getState().canvas.objects[resolvedToId];
+      const startX = fromObj ? fromObj.position.x + fromObj.size.width : 0;
+      const startY = fromObj ? fromObj.position.y + fromObj.size.height / 2 : 0;
+      const endX = toObj ? toObj.position.x : 200;
+      const endY = toObj ? toObj.position.y + (toObj.size.height / 2) : 0;
 
-        if (fromObj && toObj) {
-          const startX = fromObj.position.x + fromObj.size.width;
-          const startY = fromObj.position.y + fromObj.size.height / 2;
-          const endX = toObj.position.x;
-          const endY = toObj.position.y + toObj.size.height / 2;
-
-          editor.createShape<TLArrowShape>({
-            id: tlId,
-            type: "arrow",
-            x: startX,
-            y: startY,
-            props: {
-              text: conn.label || "",
-              color: "black",
-              size: "m",
-              dash:
-                conn.style.strokeStyle === "dashed"
-                  ? "dashed"
-                  : conn.style.strokeStyle === "dotted"
-                    ? "dotted"
-                    : "solid",
-              start: { x: 0, y: 0 },
-              end: { x: endX - startX, y: endY - startY },
-              arrowheadEnd:
-                conn.style.endHead === "none" ? "none" : "arrow",
-              arrowheadStart:
-                conn.style.startHead === "none" ? "none" : "arrow",
-            },
-          });
-        }
-      }
+      // Create our custom Directoor arrow with optional shape bindings.
+      // The arrow's component re-renders on store changes so it follows
+      // bound shapes when they move.
+      editor.createShape({
+        id: tlId,
+        type: "directoor-arrow",
+        x: 0,
+        y: 0,
+        props: {
+          startX, startY, endX, endY,
+          fromShapeId: fromTlId ?? "",
+          toShapeId: tlIdAsString(toTlId),
+          fromAnchor: pointToAnchor(conn.fromPointId),
+          toAnchor: pointToAnchor(conn.toPointId),
+          color: conn.style.stroke || "#334155",
+          strokeWidth: conn.style.strokeWidth || 2,
+          dash: conn.style.strokeStyle || "solid",
+          startHead: conn.style.startHead === "none" ? "none" : "arrow",
+          endHead: conn.style.endHead === "none" ? "none" : "arrow",
+          path: conn.style.path === "straight" ? "straight" : "elbow",
+          label: conn.label || "",
+        },
+      });
       break;
     }
 
@@ -629,21 +519,6 @@ function executeAction(
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
-
-function getAnchorForPoint(pointId: string): { x: number; y: number } {
-  switch (pointId) {
-    case "top":
-      return { x: 0.5, y: 0 };
-    case "bottom":
-      return { x: 0.5, y: 1 };
-    case "left":
-      return { x: 0, y: 0.5 };
-    case "right":
-      return { x: 1, y: 0.5 };
-    default:
-      return { x: 0.5, y: 0.5 };
-  }
-}
 
 export function clearIdMappings(): void {
   llmToStoreId.clear();

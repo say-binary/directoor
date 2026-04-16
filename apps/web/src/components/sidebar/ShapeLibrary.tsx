@@ -92,6 +92,27 @@ const ARCHETYPES: Archetype[] = [
     defaultWidth: 110, defaultHeight: 100,
     defaultStroke: "#D97706", defaultFill: "#FEF3C7",
   },
+  {
+    iconShape: "pill",
+    displayName: "Pill",
+    exampleUses: ["endpoint", "api route", "port", "version", "tag"],
+    defaultWidth: 130, defaultHeight: 50,
+    defaultStroke: "#7C3AED", defaultFill: "#F5F3FF",
+  },
+  {
+    iconShape: "layer",
+    displayName: "Layer",
+    exampleUses: ["ml layer", "input layer", "hidden layer", "output layer", "dense"],
+    defaultWidth: 90, defaultHeight: 160,
+    defaultStroke: "#1D4ED8", defaultFill: "#EFF6FF",
+  },
+  {
+    iconShape: "arrow",
+    displayName: "Arrow",
+    exampleUses: ["connection", "edge", "data flow", "relationship"],
+    defaultWidth: 200, defaultHeight: 0,
+    defaultStroke: "#334155", defaultFill: "#FFFFFF",
+  },
 ];
 
 /** Convert plain text to tldraw's richText format */
@@ -284,6 +305,34 @@ function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
           <polygon points={`${w / 2},2 ${w - 2},${h / 2} ${w / 2},${h - 2} 2,${h / 2}`} fill={fill} stroke={color} strokeWidth={1.8} strokeLinejoin="round" />
         </svg>
       );
+    case "pill":
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <rect x={2} y={8} width={w - 4} height={h - 16} rx={(h - 16) / 2} fill={fill} stroke={color} strokeWidth={1.8} />
+        </svg>
+      );
+    case "layer": {
+      const stripeCount = 3;
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <rect x={10} y={2} width={w - 20} height={h - 4} rx={4} fill={fill} stroke={color} strokeWidth={1.8} />
+          {Array.from({ length: stripeCount - 1 }).map((_, i) => {
+            const y = 2 + (h - 4) / stripeCount * (i + 1);
+            return <line key={i} x1={14} x2={w - 14} y1={y} y2={y} stroke={color} strokeOpacity={0.4} strokeWidth={1} />;
+          })}
+        </svg>
+      );
+    }
+    case "arrow":
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <line x1={6} y1={h / 2} x2={w - 10} y2={h / 2} stroke={color} strokeWidth={2} strokeLinecap="round" />
+          <polygon
+            points={`${w - 10},${h / 2 - 5} ${w - 2},${h / 2} ${w - 10},${h / 2 + 5}`}
+            fill={color}
+          />
+        </svg>
+      );
     case "rectangle":
     default:
       return (
@@ -301,47 +350,55 @@ export function createArchetypeShape(
   archetype: Archetype,
   position: { x: number; y: number },
 ) {
-  const customType = iconShapeToTldrawType(archetype.iconShape);
   const tlId = createShapeId();
 
-  if (customType) {
+  if (archetype.iconShape === "arrow") {
+    // Arrow is special — it has no bound endpoints when dragged from the library.
+    // Start it as a 200px wide horizontal arrow at the drop position.
     editor.createShape({
       id: tlId,
-      type: customType,
-      x: position.x,
-      y: position.y,
+      type: "directoor-arrow",
+      x: 0,
+      y: 0,
       props: {
-        w: archetype.defaultWidth,
-        h: archetype.defaultHeight,
-        label: archetype.displayName,
+        startX: position.x,
+        startY: position.y + 40,
+        endX: position.x + 200,
+        endY: position.y + 40,
+        fromShapeId: "",
+        toShapeId: "",
+        fromAnchor: "auto",
+        toAnchor: "auto",
         color: archetype.defaultStroke,
-        fill: archetype.defaultFill,
+        strokeWidth: 2,
         dash: "solid",
+        startHead: "none",
+        endHead: "arrow",
+        path: "straight",
+        label: "",
       },
     });
-  } else if (
-    archetype.iconShape === "circle" ||
-    archetype.iconShape === "diamond" ||
-    archetype.iconShape === "rectangle"
-  ) {
-    editor.createShape({
-      id: tlId,
-      type: "geo",
-      x: position.x,
-      y: position.y,
-      props: {
-        w: archetype.defaultWidth,
-        h: archetype.defaultHeight,
-        geo: archetype.iconShape === "circle" ? "ellipse" : archetype.iconShape,
-        color: "black",
-        richText: toRichText(archetype.displayName),
-        size: "m",
-        font: "sans",
-        dash: "solid",
-        fill: "semi",
-      },
-    });
+    // Arrows don't get auto-edit (they may have empty labels by default)
+    setTimeout(() => editor.select(tlId), 50);
+    return tlId;
   }
+
+  // Every other archetype maps to one of our Directoor custom shapes
+  const customType = iconShapeToTldrawType(archetype.iconShape);
+  editor.createShape({
+    id: tlId,
+    type: customType,
+    x: position.x,
+    y: position.y,
+    props: {
+      w: archetype.defaultWidth,
+      h: archetype.defaultHeight,
+      label: archetype.displayName,
+      color: archetype.defaultStroke,
+      fill: archetype.defaultFill,
+      dash: "solid",
+    },
+  });
 
   // Auto-enter edit mode so user can rename immediately
   setTimeout(() => {

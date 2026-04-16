@@ -48,3 +48,12 @@ export {
   getObjectsByCategory,
   getIconShape,
 } from './object-library';
+
+// Auto-mapping: novel semantic types → custom shape archetypes
+export {
+  resolveIconShape,
+  defaultStyleForSemanticType,
+  registerMapping,
+  getLearnedMappings,
+  seedLearnedMappings,
+} from './icon-resolver';

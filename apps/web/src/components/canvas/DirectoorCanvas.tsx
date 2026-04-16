@@ -409,8 +409,11 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
           document:  { w: 110, h: 130, stroke: "#475569", fill: "#F1F5F9", name: "Document" },
           stack:     { w: 130, h: 100, stroke: "#D97706", fill: "#FEF3C7", name: "Stack" },
           rectangle: { w: 140, h: 80,  stroke: "#334155", fill: "#FFFFFF", name: "Rectangle" },
-          circle:    { w: 100, h: 100, stroke: "#CBD5E1", fill: "#F8FAFC", name: "Circle" },
+          circle:    { w: 100, h: 100, stroke: "#0EA5E9", fill: "#F0F9FF", name: "Circle" },
           diamond:   { w: 110, h: 100, stroke: "#D97706", fill: "#FEF3C7", name: "Decision" },
+          pill:      { w: 130, h: 50,  stroke: "#7C3AED", fill: "#F5F3FF", name: "Endpoint" },
+          layer:     { w: 90,  h: 160, stroke: "#1D4ED8", fill: "#EFF6FF", name: "Layer" },
+          arrow:     { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Arrow" },
         };
         const d = defaults[archetype];
         if (!d) return;

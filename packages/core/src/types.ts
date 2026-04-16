@@ -122,15 +122,18 @@ export type SemanticType =
  * same icon shape (e.g., database, topic, snowflake → 'cylinder').
  */
 export type IconShape =
-  | 'rectangle'   // Default — colored box
+  | 'rectangle'   // Default — clean rectangle (our own, not tldraw geo)
   | 'cylinder'    // Databases, topics, storage
   | 'hexagon'     // Microservices, service mesh
   | 'actor'       // People, users, producers, consumers
   | 'cloud'       // Managed/external cloud services
   | 'document'    // Logs, files, reports
   | 'stack'       // Brokers, clusters, replicated compute
-  | 'circle'
-  | 'diamond';
+  | 'circle'      // Neural nodes, state machines, events
+  | 'diamond'     // Decisions, conditions, branches
+  | 'pill'        // Endpoints, ports, API routes, tags
+  | 'layer'       // ML model layers, stack layers with stripes
+  | 'arrow';      // Connection/edge — NOT a node, used for CREATE_CONNECTION
 
 /** Arrow/connection types */
 export type ConnectionType = 'arrow' | 'line';
