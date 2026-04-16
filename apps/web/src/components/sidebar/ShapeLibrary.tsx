@@ -422,21 +422,25 @@ export function createArchetypeShape(
   }
 
   if (archetype.iconShape === "text") {
-    // Text is its own shape type with different props
+    // When user drags Text from the library, default to PROSE mode
+    // (flow-wrap, resize-reflow). Larger default so the user has room
+    // to type a paragraph. contentType="prose" means text will also
+    // flow around any shape dropped onto it.
     editor.createShape({
       id: tlId,
       type: "directoor-text",
       x: position.x,
       y: position.y,
       props: {
-        w: archetype.defaultWidth,
-        h: archetype.defaultHeight,
+        w: 400,
+        h: 120,
         text: "",
         color: archetype.defaultStroke,
         size: "m",
         weight: "normal",
-        align: "center",
+        align: "left",
         background: "none",
+        contentType: "prose",
       },
     });
     setTimeout(() => {

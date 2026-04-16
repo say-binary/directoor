@@ -284,6 +284,7 @@ function executeAction(
             weight: "normal",
             align: "center",
             background: "subtle",
+            contentType: "inline",
           },
         });
       }

@@ -255,6 +255,16 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
                     if (rec.props.labelPosition === undefined) rec.props.labelPosition = 0.5;
                     if (rec.props.label === undefined) rec.props.label = "";
                   }
+                  // Migration: directoor-text gained contentType in a later version.
+                  // Small text shapes (typical arrow labels) → "inline"; larger
+                  // shapes assume "prose" mode.
+                  if (rec.type === "directoor-text") {
+                    if (rec.props.contentType === undefined) {
+                      const w = Number(rec.props.w) || 0;
+                      const h = Number(rec.props.h) || 0;
+                      rec.props.contentType = (w <= 220 && h <= 50) ? "inline" : "prose";
+                    }
+                  }
                   snapshot.store[key] = rec;
                 }
               }
@@ -434,7 +444,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
           layer:     { w: 90,  h: 160, stroke: "#1D4ED8", fill: "#EFF6FF", name: "Layer" },
           arrow:     { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Arrow" },
           line:      { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Line" },
-          text:      { w: 140, h: 32,  stroke: "#0F172A", fill: "transparent", name: "Text" },
+          text:      { w: 400, h: 120, stroke: "#0F172A", fill: "transparent", name: "Text" },
         };
         const d = defaults[archetype];
         if (!d) return;

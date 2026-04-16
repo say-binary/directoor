@@ -901,8 +901,15 @@ interface DirectoorTextProps {
   weight: "normal" | "bold";
   /** Text alignment */
   align: "left" | "center" | "right";
-  /** Optional background (for labels over busy lines) */
+  /** Optional background */
   background: "none" | "subtle" | "solid";
+  /**
+   * "inline" — a compact label (e.g. arrow label). Single-line, no flow-wrap.
+   * "prose"  — a paragraph container. Word-wraps to shape width, reflows
+   *            on resize, and flows around sibling shapes whose bounds
+   *            intersect its own.
+   */
+  contentType: "inline" | "prose";
 }
 
 const textProps: RecordProps<TLBaseShape<"directoor-text", DirectoorTextProps>> = {
@@ -914,6 +921,7 @@ const textProps: RecordProps<TLBaseShape<"directoor-text", DirectoorTextProps>> 
   weight: T.literalEnum("normal", "bold"),
   align: T.literalEnum("left", "center", "right"),
   background: T.literalEnum("none", "subtle", "solid"),
+  contentType: T.literalEnum("inline", "prose"),
 };
 
 const textDefaults: DirectoorTextProps = {
@@ -924,6 +932,7 @@ const textDefaults: DirectoorTextProps = {
   weight: "normal",
   align: "center",
   background: "none",
+  contentType: "inline",
 };
 
 const TEXT_SIZE_MAP: Record<DirectoorTextProps["size"], number> = {
@@ -947,7 +956,7 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
   }
 
   override component(shape: DirectoorTextShape) {
-    const { w, h, text, color, size, weight, align, background } = shape.props;
+    const { w, h, text, color, size, weight, align, background, contentType } = shape.props;
     const fontSize = TEXT_SIZE_MAP[size];
 
     const bgStyles: Record<DirectoorTextProps["background"], React.CSSProperties> = {
@@ -959,7 +968,7 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
         <DirectoorTextInner
-          shapeId={shape.id}
+          shape={shape}
           text={text}
           w={w}
           h={h}
@@ -968,6 +977,7 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
           align={align}
           color={color}
           bgStyle={bgStyles[background]}
+          contentType={contentType}
         />
       </HTMLContainer>
     );
@@ -978,9 +988,19 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
   }
 }
 
-/** Inner text body — separated so hooks (useEditor/useValue) can subscribe. */
+/**
+ * Inner text body.
+ *
+ * Two rendering modes:
+ *  - "inline": compact single-line label (used as arrow labels, annotations).
+ *    Centered flex layout, no wrapping beyond natural line breaks.
+ *  - "prose":  a flowing paragraph container. The text is left-aligned,
+ *    word-wraps to the shape's current width, reflows on resize, and
+ *    flows AROUND any sibling shape whose page-bounds intersect this
+ *    shape's bounds (CSS `shape-outside` with per-side float obstacles).
+ */
 function DirectoorTextInner({
-  shapeId,
+  shape,
   text,
   w,
   h,
@@ -989,8 +1009,9 @@ function DirectoorTextInner({
   align,
   color,
   bgStyle,
+  contentType,
 }: {
-  shapeId: string;
+  shape: DirectoorTextShape;
   text: string;
   w: number;
   h: number;
@@ -999,15 +1020,53 @@ function DirectoorTextInner({
   align: "left" | "center" | "right";
   color: string;
   bgStyle: React.CSSProperties;
+  contentType: "inline" | "prose";
 }) {
   const editor = useEditor();
+  const shapeId = shape.id;
   const isEditing = useValue(
     "text-isEditing",
-    () => editor.getEditingShapeId() === (shapeId as never),
+    () => editor.getEditingShapeId() === shapeId,
     [editor, shapeId],
   );
   const [draft, setDraft] = useState(text);
   const inputRef = useRef<HTMLDivElement | null>(null);
+
+  // Obstacles = sibling shapes whose page-bounds intersect ours.
+  // Only meaningful for prose mode; useValue subscribes so obstacles
+  // update live as the user drags shapes around.
+  const obstacles = useValue<Array<{ x: number; y: number; w: number; h: number; side: "left" | "right" }>>(
+    "text-obstacles",
+    () => {
+      if (contentType !== "prose") return [];
+      const selfBounds = editor.getShapePageBounds(shapeId);
+      if (!selfBounds) return [];
+      const result: Array<{ x: number; y: number; w: number; h: number; side: "left" | "right" }> = [];
+      const shapes = editor.getCurrentPageShapes();
+      for (const s of shapes) {
+        if (s.id === shapeId) continue;
+        if (s.type === "directoor-arrow") continue;    // arrows don't block flow
+        const b = editor.getShapePageBounds(s.id);
+        if (!b) continue;
+        // Check intersection with our bounds
+        const overlapX = Math.max(0, Math.min(b.x + b.w, selfBounds.x + selfBounds.w) - Math.max(b.x, selfBounds.x));
+        const overlapY = Math.max(0, Math.min(b.y + b.h, selfBounds.y + selfBounds.h) - Math.max(b.y, selfBounds.y));
+        if (overlapX <= 0 || overlapY <= 0) continue;
+        // Convert to shape-local coordinates
+        const lx = b.x - selfBounds.x;
+        const ly = b.y - selfBounds.y;
+        // Decide which side to float on, based on which half of the
+        // text shape the obstacle's center sits in. "left" means the
+        // obstacle occupies the left side and text floats to the right.
+        const obstacleCenterX = lx + b.w / 2;
+        const side: "left" | "right" = obstacleCenterX < w / 2 ? "left" : "right";
+        result.push({ x: lx, y: ly, w: b.w, h: b.h, side });
+      }
+      // Sort obstacles top-to-bottom so CSS floats stack in visual order
+      return result.sort((a, b) => a.y - b.y);
+    },
+    [editor, shapeId, contentType, w, h],
+  );
 
   useEffect(() => {
     if (isEditing) {
@@ -1028,34 +1087,123 @@ function DirectoorTextInner({
   }, [isEditing, text]);
 
   const commit = () => {
-    const shape = editor.getShape(shapeId as never);
-    if (!shape) return;
+    const s = editor.getShape(shapeId);
+    if (!s) return;
     const trimmed = draft.trim();
     if (trimmed !== text) {
       editor.updateShape({
-        id: shape.id,
-        type: shape.type,
-        props: { ...(shape.props as Record<string, unknown>), text: trimmed },
+        id: s.id,
+        type: s.type,
+        props: { ...(s.props as Record<string, unknown>), text: trimmed },
       });
     }
     editor.setEditingShape(null);
   };
 
-  const baseStyle: React.CSSProperties = {
+  // ─── Inline mode (original label behaviour) ──────────────────
+  if (contentType === "inline") {
+    const baseStyle: React.CSSProperties = {
+      position: "absolute",
+      inset: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center",
+      padding: "2px 6px",
+      fontFamily: "Inter, system-ui, sans-serif",
+      fontSize,
+      fontWeight: weight === "bold" ? 700 : 500,
+      color,
+      lineHeight: 1.2,
+      textAlign: align,
+      ...bgStyle,
+    };
+
+    if (isEditing) {
+      return (
+        <div
+          ref={inputRef}
+          contentEditable
+          suppressContentEditableWarning
+          onPointerDown={stopEventPropagation}
+          onMouseDown={stopEventPropagation}
+          onClick={stopEventPropagation}
+          onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
+            else if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
+            e.stopPropagation();
+          }}
+          style={{
+            ...baseStyle,
+            outline: "2px solid #3b82f6",
+            outlineOffset: 1,
+            borderRadius: 4,
+            background: "rgba(255,255,255,0.98)",
+            pointerEvents: "all",
+            userSelect: "text",
+            cursor: "text",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}
+        >
+          {text}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ ...baseStyle, pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+        {text || <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>}
+      </div>
+    );
+  }
+
+  // ─── Prose mode (flow container) ─────────────────────────────
+  // Render floated placeholder divs for each obstacle so the text flows
+  // around them. Obstacles are rendered BEFORE the text, with CSS `float`
+  // on the appropriate side and `shape-outside` making the text wrap tight
+  // to the obstacle rectangle.
+  const proseBase: React.CSSProperties = {
     position: "absolute",
     inset: 0,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center",
-    padding: "2px 6px",
+    overflow: "auto",
+    padding: "12px 14px",
     fontFamily: "Inter, system-ui, sans-serif",
     fontSize,
-    fontWeight: weight === "bold" ? 700 : 500,
+    fontWeight: weight === "bold" ? 700 : 400,
     color,
-    lineHeight: 1.2,
+    lineHeight: 1.5,
     textAlign: align,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
     ...bgStyle,
   };
+
+  const floatObstacles = obstacles.map((o, idx) => {
+    // Clamp to shape bounds so floats never claim space outside the container
+    const clampedX = Math.max(0, Math.min(o.x, w));
+    const clampedY = Math.max(0, Math.min(o.y, h));
+    const clampedW = Math.max(0, Math.min(o.w, w - clampedX));
+    const clampedH = Math.max(0, Math.min(o.h, h - clampedY));
+    // 10px gutter so text doesn't touch the obstacle
+    const gutter = 10;
+    return (
+      <div
+        key={`obs-${idx}`}
+        style={{
+          float: o.side,
+          width: clampedW + gutter,
+          height: clampedH + gutter,
+          // Push the float down to the obstacle's Y position by leaving
+          // an empty margin at the top of the float.
+          marginTop: clampedY,
+          marginBottom: gutter,
+          shapeOutside: `inset(0 0 0 0)`,
+        }}
+      />
+    );
+  });
 
   if (isEditing) {
     return (
@@ -1069,12 +1217,12 @@ function DirectoorTextInner({
         onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
-          else if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
+          // Enter inserts a line break (prose can be multi-paragraph)
+          if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
           e.stopPropagation();
         }}
         style={{
-          ...baseStyle,
+          ...proseBase,
           outline: "2px solid #3b82f6",
           outlineOffset: 1,
           borderRadius: 4,
@@ -1082,8 +1230,6 @@ function DirectoorTextInner({
           pointerEvents: "all",
           userSelect: "text",
           cursor: "text",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
         }}
       >
         {text}
@@ -1092,7 +1238,8 @@ function DirectoorTextInner({
   }
 
   return (
-    <div style={{ ...baseStyle, pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+    <div style={{ ...proseBase, pointerEvents: "none" }}>
+      {floatObstacles}
       {text || <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>}
     </div>
   );

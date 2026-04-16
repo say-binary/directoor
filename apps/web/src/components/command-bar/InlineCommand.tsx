@@ -63,35 +63,28 @@ export function InlineCommand({
     setLastMessage("");
 
     try {
-      const response = await fetch("/api/command", {
+      // ─── Step 1: classify intent ─────────────────────────
+      // The classifier runs a cheap regex prefilter first, and only
+      // falls back to an LLM call for ambiguous queries.
+      setLastMessage("Understanding…");
+      const intentRes = await fetch("/api/classify-intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          command: trimmed,
-          context: store.getState().getContextSnapshot(),
-          anchorPosition: canvasPosition,
-        }),
+        body: JSON.stringify({ query: trimmed }),
       });
+      const intent = intentRes.ok
+        ? ((await intentRes.json()) as { mode: "diagram" | "text" | "image" })
+        : { mode: "diagram" as const };
 
-      if (!response.ok) {
-        setLastMessage(`Error: ${response.statusText}`);
+      // ─── Step 2: route ───────────────────────────────────
+      if (intent.mode === "text") {
+        await handleTextGeneration(trimmed);
+      } else if (intent.mode === "image") {
+        // Image mode not yet implemented — fall back to a helpful message
+        setLastMessage("Image generation is coming soon. Try 'write…' or 'diagram…'.");
         return;
-      }
-
-      const result = await response.json();
-
-      if (result.error) {
-        setLastMessage(result.error);
-        return;
-      }
-
-      if (result.actions && Array.isArray(result.actions) && result.actions.length > 0) {
-        executeActions(result.actions, store, editor);
-        setLastMessage(`Done! ${result.actions.length} action(s) executed.`);
-        // Close after a brief delay so user sees the success message
-        setTimeout(onClose, 800);
       } else {
-        setLastMessage("No actions to execute.");
+        await handleDiagramGeneration(trimmed);
       }
 
       setInput("");
@@ -100,6 +93,82 @@ export function InlineCommand({
       setLastMessage("Connection error. Try again.");
     } finally {
       setIsProcessing(false);
+    }
+
+    async function handleTextGeneration(prompt: string) {
+      setLastMessage("Writing…");
+      const res = await fetch("/api/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!res.ok) {
+        setLastMessage(`Error: ${res.statusText}`);
+        return;
+      }
+      const result = (await res.json()) as {
+        text?: string;
+        suggestedWidth?: number;
+        suggestedHeight?: number;
+        error?: string;
+      };
+      if (result.error || !result.text) {
+        setLastMessage(result.error ?? "No text generated");
+        return;
+      }
+      // Create a prose-mode DirectoorText at the click position
+      const w = result.suggestedWidth ?? 440;
+      const h = result.suggestedHeight ?? 120;
+      const tldraw = await import("tldraw");
+      const tlId = tldraw.createShapeId();
+      editor.createShape({
+        id: tlId,
+        type: "directoor-text",
+        x: canvasPosition.x - w / 2,
+        y: canvasPosition.y - h / 2,
+        props: {
+          w, h,
+          text: result.text,
+          color: "#0F172A",
+          size: "m",
+          weight: "normal",
+          align: "left",
+          background: "subtle",
+          contentType: "prose",
+        },
+      });
+      editor.select(tlId);
+      setLastMessage("Done!");
+      setTimeout(onClose, 600);
+    }
+
+    async function handleDiagramGeneration(command: string) {
+      setLastMessage("Drawing…");
+      const response = await fetch("/api/command", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          command,
+          context: store.getState().getContextSnapshot(),
+          anchorPosition: canvasPosition,
+        }),
+      });
+      if (!response.ok) {
+        setLastMessage(`Error: ${response.statusText}`);
+        return;
+      }
+      const result = await response.json();
+      if (result.error) {
+        setLastMessage(result.error);
+        return;
+      }
+      if (result.actions && Array.isArray(result.actions) && result.actions.length > 0) {
+        executeActions(result.actions, store, editor);
+        setLastMessage(`Done! ${result.actions.length} action(s) executed.`);
+        setTimeout(onClose, 800);
+      } else {
+        setLastMessage("No actions to execute.");
+      }
     }
   }, [input, isProcessing, store, editor, canvasPosition, onClose]);
 
@@ -140,7 +209,7 @@ export function InlineCommand({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="What should go here? e.g. &quot;Database and S3 with an arrow&quot;"
+            placeholder='Describe a diagram, or ask for text: "write 2 paragraphs on kafka"'
             className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             disabled={isProcessing}
           />
