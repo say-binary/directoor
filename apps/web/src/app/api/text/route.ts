@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { logCommand, resolveUserId } from "@/lib/command-logger";
+import { checkDailyLlmCap } from "@/lib/tier";
 
 /**
  * POST /api/text
@@ -63,6 +64,22 @@ export async function POST(request: NextRequest) {
     }
     if (prompt.length > 500) {
       return NextResponse.json({ error: "Prompt too long" }, { status: 400 });
+    }
+
+    // Free-tier daily cap
+    const cap = await checkDailyLlmCap(userId);
+    if (!cap.allowed) {
+      await logCommand({
+        userId, canvasId: body.canvasId ?? null,
+        route: "text", mode: "text", prompt,
+        latencyMs: Date.now() - t0,
+        status: "rejected",
+        errorMessage: cap.message,
+      });
+      return NextResponse.json(
+        { error: cap.message, capExceeded: true, tier: cap.tier, used: cap.used, limit: cap.limit },
+        { status: 429 },
+      );
     }
 
     const message = await anthropic.messages.create({

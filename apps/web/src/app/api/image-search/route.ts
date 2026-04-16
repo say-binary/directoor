@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { logCommand, resolveUserId } from "@/lib/command-logger";
+import { checkDailyLlmCap } from "@/lib/tier";
 
 /**
  * POST /api/image-search
@@ -54,6 +55,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Query too long" }, { status: 400 });
     }
     const canvasId = body.canvasId ?? null;
+
+    // Free-tier daily cap
+    const cap = await checkDailyLlmCap(userId);
+    if (!cap.allowed) {
+      await logCommand({
+        userId, canvasId,
+        route: "image-search", mode: "image", prompt: query,
+        latencyMs: Date.now() - t0,
+        status: "rejected",
+        errorMessage: cap.message,
+      });
+      return NextResponse.json(
+        { results: [], error: cap.message, capExceeded: true, tier: cap.tier, used: cap.used, limit: cap.limit },
+        { status: 429 },
+      );
+    }
 
     const url = new URL("https://api.openverse.org/v1/images/");
     url.searchParams.set("q", query);

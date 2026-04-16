@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/AuthProvider";
 import { LoginScreen } from "@/components/auth/LoginScreen";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { supabase } from "@/lib/supabase";
+import { useSubscription } from "@/lib/use-subscription";
 
 const DirectoorCanvas = dynamic(
   () =>
@@ -17,6 +18,7 @@ const DirectoorCanvas = dynamic(
 
 export default function Home() {
   const { user, loading } = useAuth();
+  const subscription = useSubscription(user);
   const isDev = process.env.NODE_ENV === "development";
   const [devBypass, setDevBypass] = useState(false);
 
@@ -69,6 +71,22 @@ export default function Home() {
       return;
     }
 
+    // Free-tier cap: max 3 canvases
+    if (subscription.tier === "free") {
+      try {
+        const { count } = await supabase
+          .from("canvases")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id);
+        if ((count ?? 0) >= 3) {
+          alert("Free plan is limited to 3 canvases. Upgrade to Pro for unlimited.");
+          return;
+        }
+      } catch {
+        // best-effort — don't block creation on count error
+      }
+    }
+
     // Save current canvas first
     if (saveFnRef.current) {
       await saveFnRef.current();
@@ -90,7 +108,7 @@ export default function Home() {
     } catch (err) {
       console.error("Failed to create canvas:", err);
     }
-  }, [user]);
+  }, [user, subscription.tier]);
 
   const handleSelectCanvas = useCallback(async (id: string) => {
     if (id === currentCanvasId) return;
@@ -127,6 +145,7 @@ export default function Home() {
           onSelectCanvas={handleSelectCanvas}
           onNewCanvas={createNewCanvas}
           editor={editor}
+          tier={subscription.tier}
         />
       )}
 
@@ -136,6 +155,7 @@ export default function Home() {
             key={currentCanvasId ?? "default"}
             canvasId={currentCanvasId}
             userId={user?.id}
+            tier={subscription.tier}
             onEditorReady={setEditor}
             onSaveReady={handleSaveReady}
           />

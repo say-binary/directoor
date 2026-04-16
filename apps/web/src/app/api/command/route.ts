@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { CanvasAction, ContextSnapshot } from "@directoor/core";
 import { SYSTEM_PROMPT, detectPatterns } from "./prompts";
 import { logCommand, resolveUserId } from "@/lib/command-logger";
+import { checkDailyLlmCap } from "@/lib/tier";
 
 /**
  * POST /api/command
@@ -69,6 +70,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Command too long" },
         { status: 400 },
+      );
+    }
+
+    // Free-tier daily cap
+    const cap = await checkDailyLlmCap(userId);
+    if (!cap.allowed) {
+      await logCommand({
+        userId, canvasId: canvasIdForLog,
+        route: "command", mode: "diagram", prompt: cmdForLog,
+        contextMeta: contextForLog,
+        latencyMs: Date.now() - t0,
+        status: "rejected",
+        errorMessage: cap.message,
+      });
+      return NextResponse.json(
+        { actions: [], error: cap.message, capExceeded: true, tier: cap.tier, used: cap.used, limit: cap.limit },
+        { status: 429 },
       );
     }
 

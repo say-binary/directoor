@@ -16,6 +16,7 @@ import { useAuth } from "../auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { ShapeLibrary } from "./ShapeLibrary";
 import { ImageLibraryPanel } from "./ImageLibraryPanel";
+import { BillingButton } from "./BillingButton";
 import type { Editor } from "tldraw";
 
 interface CanvasListItem {
@@ -31,11 +32,12 @@ interface SidebarProps {
   onSelectCanvas: (id: string) => void;
   onNewCanvas: () => void;
   editor: Editor | null;
+  tier?: "free" | "pro";
 }
 
 type SidebarTab = "canvases" | "shapes" | "images";
 
-export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor }: SidebarProps) {
+export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, tier = "free" }: SidebarProps) {
   const { user, signOut } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [canvases, setCanvases] = useState<CanvasListItem[]>([]);
@@ -352,8 +354,11 @@ export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor }
         </>
       )}
 
-      {/* Footer — user info + logout */}
+      {/* Footer — billing + user info + logout */}
       <div className="border-t border-slate-100 px-3 py-2.5">
+        <div className="mb-2">
+          <BillingButton tier={tier} />
+        </div>
         <div className="flex items-center gap-2">
           {user?.user_metadata?.avatar_url && (
             <img

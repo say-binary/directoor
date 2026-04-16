@@ -116,6 +116,11 @@ export function InlineCommand({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
+      if (res.status === 429) {
+        const j = await res.json().catch(() => ({}));
+        setLastMessage(j.error ?? "Daily free limit reached.");
+        return;
+      }
       if (!res.ok) {
         setLastMessage(`Error: ${res.statusText}`);
         return;
@@ -170,6 +175,11 @@ export function InlineCommand({
           anchorPosition: canvasPosition,
         }),
       });
+      if (response.status === 429) {
+        const j = await response.json().catch(() => ({}));
+        setLastMessage(j.error ?? "Daily free limit reached.");
+        return;
+      }
       if (!response.ok) {
         setLastMessage(`Error: ${response.statusText}`);
         return;

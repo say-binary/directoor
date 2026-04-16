@@ -31,13 +31,15 @@ import { AnimationExportDialog } from "./AnimationExportDialog";
 interface DirectoorCanvasProps {
   canvasId?: string | null;
   userId?: string;
+  /** "free" | "pro" — used to apply watermark on free-tier exports */
+  tier?: "free" | "pro";
   /** Called when save function is ready — parent uses this to save before switching */
   onSaveReady?: (saveFn: () => Promise<void>) => void;
   /** Called when the tldraw editor is ready — parent uses this for sidebar shape library */
   onEditorReady?: (editor: Editor) => void;
 }
 
-export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }: DirectoorCanvasProps) {
+export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorReady }: DirectoorCanvasProps) {
   const [editor, setEditor] = useState<Editor | null>(null);
   const [store] = useState(() => createCanvasStore(canvasId ?? undefined, userId));
 
@@ -620,6 +622,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
       <CanvasToolbar
         editor={editor}
         canvasId={canvasId ?? null}
+        watermark={tier !== "pro"}
         onShare={() => setShareOpen(true)}
         hasAnimation={animationRegions.length > 0}
         onExportAnimation={() => setExportAnimationOpen(true)}

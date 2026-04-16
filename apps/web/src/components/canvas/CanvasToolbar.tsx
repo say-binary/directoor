@@ -8,6 +8,8 @@ import { exportAsPng, exportAsSvg, copyCanvasToClipboard } from "@/lib/export";
 interface CanvasToolbarProps {
   editor: Editor | null;
   canvasId: string | null;
+  /** True when the user is on the free tier — adds watermark to exports */
+  watermark?: boolean;
   onShare?: () => void;
   onExportAnimation?: () => void;
   hasAnimation?: boolean;
@@ -21,6 +23,7 @@ interface CanvasToolbarProps {
  */
 export function CanvasToolbar({
   editor,
+  watermark,
   onShare,
   onExportAnimation,
   hasAnimation,
@@ -31,18 +34,18 @@ export function CanvasToolbar({
   const handlePng = async () => {
     if (!editor) return;
     setBusy("png");
-    try { await exportAsPng(editor); } finally { setBusy(null); }
+    try { await exportAsPng(editor, { watermark }); } finally { setBusy(null); }
   };
   const handleSvg = async () => {
     if (!editor) return;
     setBusy("svg");
-    try { await exportAsSvg(editor); } finally { setBusy(null); }
+    try { await exportAsSvg(editor, { watermark }); } finally { setBusy(null); }
   };
   const handleCopy = async () => {
     if (!editor) return;
     setBusy("copy");
     try {
-      const ok = await copyCanvasToClipboard(editor);
+      const ok = await copyCanvasToClipboard(editor, { watermark });
       if (ok) {
         setJustCopied(true);
         setTimeout(() => setJustCopied(false), 1400);
