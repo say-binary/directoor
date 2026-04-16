@@ -211,6 +211,7 @@ export function defaultStyleForSemanticType(semanticType: string): { stroke: str
     arrow:     { stroke: '#334155', fill: '#FFFFFF' },
     line:      { stroke: '#334155', fill: '#FFFFFF' },
     text:      { stroke: '#0F172A', fill: 'transparent' },
+    image:     { stroke: '#94A3B8', fill: '#F1F5F9' },
   };
   return palette[icon];
 }
