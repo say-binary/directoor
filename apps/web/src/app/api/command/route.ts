@@ -5,6 +5,9 @@ import { SYSTEM_PROMPT, detectPatterns } from "./prompts";
 import { logCommand, resolveUserId } from "@/lib/command-logger";
 import { checkDailyLlmCap } from "@/lib/tier";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/command
  *

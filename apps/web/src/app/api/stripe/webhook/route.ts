@@ -3,6 +3,11 @@ import { createClient } from "@supabase/supabase-js";
 import { stripe, STRIPE_CONFIGURED, STRIPE_WEBHOOK_SECRET } from "@/lib/stripe";
 import type Stripe from "stripe";
 
+// Stripe webhook signature verification requires the RAW request body —
+// we read it via request.text() below. Force Node runtime (not Edge).
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/stripe/webhook
  *

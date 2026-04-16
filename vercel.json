@@ -1,0 +1,14 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "pnpm --filter @directoor/web build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "outputDirectory": "apps/web/.next",
+  "framework": "nextjs",
+  "ignoreCommand": "git diff --quiet HEAD^ HEAD -- apps/web packages/core",
+  "functions": {
+    "apps/web/src/app/api/command/route.ts": { "maxDuration": 60 },
+    "apps/web/src/app/api/text/route.ts":    { "maxDuration": 30 },
+    "apps/web/src/app/api/image-search/route.ts": { "maxDuration": 15 },
+    "apps/web/src/app/api/stripe/webhook/route.ts": { "maxDuration": 15 }
+  }
+}

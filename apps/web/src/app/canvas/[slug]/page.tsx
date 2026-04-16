@@ -1,10 +1,5 @@
-import dynamic from "next/dynamic";
 import type { Metadata } from "next";
-
-const PublicCanvasViewer = dynamic(
-  () => import("@/components/canvas/PublicCanvasViewer").then((m) => m.PublicCanvasViewer),
-  { ssr: false },
-);
+import { PublicCanvasClient } from "./client";
 
 interface PageProps {
   // Next 16: params is async
@@ -25,5 +20,5 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
 export default async function PublicCanvasPage({ params }: PageProps) {
   const { slug } = await params;
-  return <PublicCanvasViewer slug={slug} />;
+  return <PublicCanvasClient slug={slug} />;
 }

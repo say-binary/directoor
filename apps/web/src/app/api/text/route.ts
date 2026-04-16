@@ -3,6 +3,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { logCommand, resolveUserId } from "@/lib/command-logger";
 import { checkDailyLlmCap } from "@/lib/tier";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/text
  *
