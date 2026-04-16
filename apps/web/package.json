@@ -15,6 +15,7 @@
     "@directoor/core": "workspace:*",
     "@supabase/ssr": "^0.6.0",
     "@supabase/supabase-js": "^2.49.0",
+    "gifenc": "^1.0.3",
     "lucide-react": "^0.513.0",
     "nanoid": "^5.1.7",
     "next": "16.2.3",

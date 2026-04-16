@@ -15,6 +15,9 @@ import { InlineCommand } from "../command-bar/InlineCommand";
 import { AnimationRegion, type AnimationRegionData } from "../animation/AnimationRegion";
 import { Sparkles } from "lucide-react";
 import { supabase } from "@/lib/supabase";
+import { CanvasToolbar } from "./CanvasToolbar";
+import { ShareDialog } from "./ShareDialog";
+import { AnimationExportDialog } from "./AnimationExportDialog";
 
 /**
  * DirectoorCanvas — The main canvas component
@@ -46,6 +49,8 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
 
   // Animation regions
   const [animationRegions, setAnimationRegions] = useState<AnimationRegionData[]>([]);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [exportAnimationOpen, setExportAnimationOpen] = useState(false);
 
   // Selection state for showing "Animate this" button
   const [selectedShapeIds, setSelectedShapeIds] = useState<TLShapeId[]>([]);
@@ -611,6 +616,15 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
       />
 
+      {/* Top-right floating toolbar — export + share */}
+      <CanvasToolbar
+        editor={editor}
+        canvasId={canvasId ?? null}
+        onShare={() => setShareOpen(true)}
+        hasAnimation={animationRegions.length > 0}
+        onExportAnimation={() => setExportAnimationOpen(true)}
+      />
+
       {/* "Animate" button when shapes are selected (only if not already in a region) */}
       {selectedShapeIds.length >= 1 && editor && (
         <div
@@ -658,6 +672,23 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
         onAnimateCommand={handleAnimateCommand}
         animateHint={hasEditingRegion ? "Type: animate 1,2,3,4" : undefined}
       />
+
+      {/* Share dialog */}
+      {shareOpen && canvasId && (
+        <ShareDialog
+          canvasId={canvasId}
+          onClose={() => setShareOpen(false)}
+        />
+      )}
+
+      {/* Animation export dialog */}
+      {exportAnimationOpen && editor && (
+        <AnimationExportDialog
+          editor={editor}
+          regions={animationRegions}
+          onClose={() => setExportAnimationOpen(false)}
+        />
+      )}
     </div>
   );
 }
