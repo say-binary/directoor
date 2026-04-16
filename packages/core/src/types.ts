@@ -135,7 +135,8 @@ export type IconShape =
   | 'layer'       // ML model layers, stack layers with stripes
   | 'arrow'       // Connection/edge with arrowhead(s)
   | 'line'        // Plain connection/edge (no arrowheads)
-  | 'text';       // Standalone text — movable, rotatable, editable
+  | 'text'        // Standalone text — movable, rotatable, editable
+  | 'image';      // Web image — resizable, movable, rotatable
 
 /** Arrow/connection types */
 export type ConnectionType = 'arrow' | 'line';

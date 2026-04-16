@@ -34,9 +34,10 @@ const TEXT_PATTERNS: RegExp[] = [
 ];
 
 const IMAGE_PATTERNS: RegExp[] = [
-  /\b(image|photo|picture|pic|illustration|photograph)\s+(of|for|showing)\b/i,
-  /\b(find|fetch|get|show)\s+(a\s+)?(image|photo|picture|pic|illustration)\b/i,
-  /^(image|photo|picture|pic)\b\s*:/i,
+  /\b(image|photo|picture|pic|illustration|photograph)s?\s+(of|for|showing)\b/i,
+  /\b(find|fetch|get|show|search)\s+(me\s+)?(a\s+|an\s+|some\s+)?(image|photo|picture|pic|illustration|photograph)s?\b/i,
+  /^(image|photo|picture|pic)s?\s*[:\-]/i,
+  /^(show|find|fetch|get|search)\s+me\b/i,    // "show me X" — usually visual
 ];
 
 const DIAGRAM_PATTERNS: RegExp[] = [

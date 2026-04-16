@@ -882,6 +882,128 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
   }
 }
 
+// ─── Image Shape (web image dropped onto canvas) ────────────────────
+// A first-class image shape: resizable, movable, rotatable, and
+// participates in prose-text wrapping (treated as an obstacle by
+// DirectoorText in "prose" contentType). Stores the image URL plus a
+// metadata caption that can be overlaid as a corner label.
+
+interface DirectoorImageProps {
+  w: number;
+  h: number;
+  src: string;
+  alt: string;
+  /** Optional human-readable caption shown as a corner overlay */
+  caption: string;
+  /** Source attribution URL (link to original page) */
+  sourceUrl: string;
+  /** Natural aspect ratio (w/h) at the time of placement, for resize hinting */
+  naturalAspect: number;
+}
+
+const imageProps: RecordProps<TLBaseShape<"directoor-image", DirectoorImageProps>> = {
+  w: T.number,
+  h: T.number,
+  src: T.string,
+  alt: T.string,
+  caption: T.string,
+  sourceUrl: T.string,
+  naturalAspect: T.number,
+};
+
+const imageDefaults: DirectoorImageProps = {
+  w: 240, h: 180,
+  src: "",
+  alt: "",
+  caption: "",
+  sourceUrl: "",
+  naturalAspect: 4 / 3,
+};
+
+export type DirectoorImageShape = TLBaseShape<"directoor-image", DirectoorImageProps>;
+
+export class DirectoorImageShapeUtil extends BaseBoxShapeUtil<DirectoorImageShape> {
+  static override type = "directoor-image" as const;
+  static override props = imageProps as RecordProps<DirectoorImageShape>;
+
+  override canEdit(): boolean { return true; }
+  override canResize(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorImageProps {
+    return imageDefaults;
+  }
+
+  override getGeometry(shape: DirectoorImageShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorImageShape) {
+    const { w, h, src, alt, caption } = shape.props;
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <div
+          style={{
+            width: w,
+            height: h,
+            position: "relative",
+            borderRadius: 6,
+            overflow: "hidden",
+            background: "#F1F5F9",
+            boxShadow: "0 1px 3px rgba(15,23,42,0.12)",
+          }}
+        >
+          {src ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={src}
+              alt={alt}
+              draggable={false}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                display: "block",
+                userSelect: "none",
+                pointerEvents: "none",
+              }}
+            />
+          ) : (
+            <div style={{
+              width: "100%", height: "100%",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#94A3B8", fontSize: 11,
+            }}>No image</div>
+          )}
+          {caption && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0, right: 0, bottom: 0,
+                padding: "4px 8px",
+                background: "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.55) 100%)",
+                color: "#FFFFFF",
+                fontSize: 11,
+                fontFamily: "Inter, system-ui, sans-serif",
+                lineHeight: 1.3,
+                pointerEvents: "none",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {caption}
+            </div>
+          )}
+        </div>
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorImageShape) {
+    return <rect width={shape.props.w} height={shape.props.h} rx={6} />;
+  }
+}
+
 // ─── Text Shape (standalone, movable, editable, rotatable) ──────────
 // Decoupled text — a standalone shape that can be placed anywhere,
 // moved, resized, rotated, and edited independently of other shapes.
@@ -1751,6 +1873,7 @@ export const DIRECTOOR_SHAPE_UTILS = [
   DirectoorPillShapeUtil,
   DirectoorLayerShapeUtil,
   DirectoorTextShapeUtil,
+  DirectoorImageShapeUtil,
   DirectoorArrowShapeUtil,
 ];
 
@@ -1773,6 +1896,7 @@ export function iconShapeToTldrawType(iconShape: string): string {
     case "arrow":    return "directoor-arrow";
     case "line":     return "directoor-arrow"; // line = arrow with no heads
     case "text":     return "directoor-text";
+    case "image":    return "directoor-image";
     case "rectangle":
     default:         return "directoor-rectangle";
   }

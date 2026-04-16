@@ -410,7 +410,8 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
       const types = e.dataTransfer?.types ?? [];
       if (
         types.includes("application/x-directoor-archetype") ||
-        types.includes("application/x-directoor-shape")
+        types.includes("application/x-directoor-shape") ||
+        types.includes("application/x-directoor-library-image")
       ) {
         e.preventDefault();
         e.dataTransfer!.dropEffect = "copy";
@@ -420,10 +421,41 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
     const handleDrop = async (e: DragEvent) => {
       const archetype = e.dataTransfer?.getData("application/x-directoor-archetype");
       const semanticType = e.dataTransfer?.getData("application/x-directoor-shape");
-      if (!archetype && !semanticType) return;
+      const libraryImageId = e.dataTransfer?.getData("application/x-directoor-library-image");
+      if (!archetype && !semanticType && !libraryImageId) return;
       e.preventDefault();
 
       const canvasPoint = editor.screenToPage({ x: e.clientX, y: e.clientY });
+
+      // ── Image library drop ────────────────────────────────────
+      if (libraryImageId) {
+        const { imageLibrary } = await import("@/lib/image-library");
+        const { createShapeId } = await import("tldraw");
+        const img = imageLibrary.getSnapshot().find((i) => i.id === libraryImageId);
+        if (!img) return;
+        const aspect = img.width > 0 && img.height > 0 ? img.width / img.height : 4 / 3;
+        const w = Math.min(320, img.width || 320);
+        const h = Math.round(w / aspect);
+        editor.markHistoryStoppingPoint("Drop library image");
+        const tlId = createShapeId();
+        editor.createShape({
+          id: tlId,
+          type: "directoor-image",
+          x: canvasPoint.x - w / 2,
+          y: canvasPoint.y - h / 2,
+          props: {
+            w, h,
+            src: img.url,
+            alt: img.title,
+            caption: "",
+            sourceUrl: img.source ?? "",
+            naturalAspect: aspect,
+          },
+        });
+        editor.select(tlId);
+        return;
+      }
+
       const lib = await import("../sidebar/ShapeLibrary");
 
       if (archetype) {

@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "re
 import { Command, Send, Loader2, MapPin } from "lucide-react";
 import type { Editor } from "tldraw";
 import { executeActions } from "@/lib/tldraw-bridge";
+import { InlineImagePicker } from "./InlineImagePicker";
 
 interface InlineCommandProps {
   editor: Editor;
@@ -27,6 +28,7 @@ export function InlineCommand({
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastMessage, setLastMessage] = useState("");
+  const [imageQuery, setImageQuery] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -80,8 +82,13 @@ export function InlineCommand({
       if (intent.mode === "text") {
         await handleTextGeneration(trimmed);
       } else if (intent.mode === "image") {
-        // Image mode not yet implemented — fall back to a helpful message
-        setLastMessage("Image generation is coming soon. Try 'write…' or 'diagram…'.");
+        // Hand off to the image picker — strips a leading verb like
+        // "show me", "find", "image of" so the search query is clean.
+        const cleaned = trimmed.replace(
+          /^\s*(show me|find|search|get|image(s)? of|picture(s)? of|photo(s)? of|an? image of|some images of)\s+/i,
+          "",
+        ).trim();
+        setImageQuery(cleaned || trimmed);
         return;
       } else {
         await handleDiagramGeneration(trimmed);
@@ -179,6 +186,19 @@ export function InlineCommand({
     }
   };
 
+  // If image intent was inferred, show the picker instead of the bar
+  if (imageQuery) {
+    return (
+      <InlineImagePicker
+        editor={editor}
+        query={imageQuery}
+        canvasPosition={canvasPosition}
+        screenPosition={screenPosition}
+        onClose={onClose}
+      />
+    );
+  }
+
   // Position: centered on click point, clamped to viewport
   const left = Math.max(16, Math.min(screenPosition.x - 280, window.innerWidth - 580));
   const top = Math.min(screenPosition.y + 12, window.innerHeight - 100);
@@ -209,7 +229,7 @@ export function InlineCommand({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder='Describe a diagram, or ask for text: "write 2 paragraphs on kafka"'
+            placeholder='Diagram, text ("write 2 paragraphs on kafka"), or images ("show me golden retrievers")'
             className="flex-1 bg-transparent text-sm text-slate-900 outline-none placeholder:text-slate-400"
             disabled={isProcessing}
           />
