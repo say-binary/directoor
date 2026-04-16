@@ -251,6 +251,36 @@ Build a complete idiomatic Kafka topology:
 - Include a document/log-aggregator for prompt logging if user asks.`,
   },
   {
+    triggers: ["neural network", "neural net", "deep learning", "dnn", "mlp", "perceptron", "feedforward", "multilayer perceptron"],
+    template: `
+## PATTERN: NEURAL NETWORK / DEEP NEURAL NET
+
+Generate a proper fully-connected feedforward architecture. Use CIRCLE semanticType for individual neurons.
+
+Unless user specifies exact counts, default to:
+- Input layer: 4 circles (neurons), size 50x50, vertically stacked with 70px spacing, centered around x=-400
+- Hidden layer 1: 5 circles, vertically stacked at x=-150
+- Hidden layer 2: 5 circles, vertically stacked at x=+100
+- Output layer: 2 circles, vertically stacked at x=+400 (or +350)
+
+Label circles with actual values: x₁ x₂ x₃ x₄ for inputs, h₁₁ h₁₂ ... for hidden, y₁ y₂ for outputs.
+
+Label each LAYER with a small "text" or "generic-box" above the top neuron of each column (y around -250) — labels like "Input Layer", "Hidden Layer 1", "Hidden Layer 2", "Output Layer". Below each column (y around +250) put another small label for activation function ("ReLU", "Softmax", etc.).
+
+CONNECTIONS (critical — this is where the diagram derives its shape):
+- Fully connected: every neuron in layer N connects to every neuron in layer N+1.
+- For a 4-5-5-2 network that's 4*5 + 5*5 + 5*2 = 55 connections.
+- Use CREATE_CONNECTION with style.strokeWidth = 1 and style.stroke = "#94A3B8" (light grey, thinner than default) so the mesh doesn't overwhelm the neurons.
+- path: "straight" (NOT elbow)
+- endHead: "none" (neural network edges are usually plain lines, no arrowheads)
+- startHead: "none"
+- No label on connections
+
+EVERY connection must be emitted explicitly. Do not omit any for brevity.
+
+Only use semanticType: "circle" for neurons. Do NOT use "layer" semanticType — the rectangle-with-stripes layer shape is wrong here; a layer in an NN is a COLUMN of neurons, not a single shape.`,
+  },
+  {
     triggers: ["ml pipeline", "mlops", "training pipeline"],
     template: `
 ## PATTERN: ML PIPELINE

@@ -115,8 +115,10 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
       if (saveStr === lastSavedRef.current) return;
 
       const allShapes = ed.getCurrentPageShapes();
-      const objectCount = allShapes.filter((s) => s.type !== "arrow").length;
-      const connectionCount = allShapes.filter((s) => s.type === "arrow").length;
+      // Connections = any arrow shape (tldraw "arrow" or our "directoor-arrow")
+      const isArrow = (s: { type: string }) => s.type === "arrow" || s.type === "directoor-arrow";
+      const objectCount = allShapes.filter((s) => !isArrow(s)).length;
+      const connectionCount = allShapes.filter(isArrow).length;
 
       // Save via our API route (which has the empty-write safety check)
       const res = await fetch("/api/save-canvas", {
@@ -171,8 +173,10 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
       };
 
       const allShapes = ed.getCurrentPageShapes();
-      const objectCount = allShapes.filter((s) => s.type !== "arrow").length;
-      const connectionCount = allShapes.filter((s) => s.type === "arrow").length;
+      // Connections = any arrow shape (tldraw "arrow" or our "directoor-arrow")
+      const isArrow = (s: { type: string }) => s.type === "arrow" || s.type === "directoor-arrow";
+      const objectCount = allShapes.filter((s) => !isArrow(s)).length;
+      const connectionCount = allShapes.filter(isArrow).length;
 
       navigator.sendBeacon(
         "/api/save-canvas",

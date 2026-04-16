@@ -222,11 +222,12 @@ function executeAction(
       // Compute initial absolute endpoints from store object positions
       const fromObj = store.getState().canvas.objects[resolvedFromId];
       const toObj = store.getState().canvas.objects[resolvedToId];
+      const safeNum = (n: unknown, fallback: number) => Number.isFinite(n as number) ? (n as number) : fallback;
 
-      const startX = fromObj ? fromObj.position.x + fromObj.size.width : 0;
-      const startY = fromObj ? fromObj.position.y + fromObj.size.height / 2 : 0;
-      const endX = toObj ? toObj.position.x : 200;
-      const endY = toObj ? toObj.position.y + (toObj.size.height / 2) : 0;
+      const startX = fromObj ? safeNum(fromObj.position.x, 0) + safeNum(fromObj.size.width, 140) : 0;
+      const startY = fromObj ? safeNum(fromObj.position.y, 0) + safeNum(fromObj.size.height, 80) / 2 : 0;
+      const endX = toObj ? safeNum(toObj.position.x, 200) : 200;
+      const endY = toObj ? safeNum(toObj.position.y, 0) + safeNum(toObj.size.height, 80) / 2 : 0;
 
       // Create our custom Directoor arrow with optional shape bindings.
       // The arrow's component re-renders on store changes so it follows

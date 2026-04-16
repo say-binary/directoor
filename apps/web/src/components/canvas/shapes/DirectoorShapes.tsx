@@ -18,6 +18,7 @@
 
 import {
   BaseBoxShapeUtil,
+  ShapeUtil,
   HTMLContainer,
   RecordProps,
   TLBaseShape,
@@ -25,6 +26,7 @@ import {
   Rectangle2d,
   Geometry2d,
   useEditor,
+  useValue,
   stopEventPropagation,
 } from "tldraw";
 import { useEffect, useRef, useState } from "react";
@@ -94,7 +96,14 @@ function EditableLabel({
   bottomAnchored?: boolean;
 }) {
   const editor = useEditor();
-  const isEditing = editor.getEditingShapeId() === shapeId;
+  // CRITICAL: must use useValue so the component re-renders when
+  // editor.getEditingShapeId() changes. Without it, the shape never
+  // knows it entered edit mode.
+  const isEditing = useValue(
+    "isEditing",
+    () => editor.getEditingShapeId() === (shapeId as never),
+    [editor, shapeId],
+  );
   const [draft, setDraft] = useState(label);
   const inputRef = useRef<HTMLDivElement | null>(null);
 
@@ -220,7 +229,11 @@ function StackLabel({
   innerH: number;
 }) {
   const editor = useEditor();
-  const isEditing = editor.getEditingShapeId() === shapeId;
+  const isEditing = useValue(
+    "isEditing",
+    () => editor.getEditingShapeId() === (shapeId as never),
+    [editor, shapeId],
+  );
   const [draft, setDraft] = useState(label);
   const inputRef = useRef<HTMLDivElement | null>(null);
 
@@ -243,7 +256,7 @@ function StackLabel({
   }, [isEditing, label]);
 
   const commit = () => {
-    const shape = editor.getShape(shapeId);
+    const shape = editor.getShape(shapeId as never);
     if (!shape) return;
     const trimmed = draft.trim();
     if (trimmed !== label) {
@@ -868,19 +881,20 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
 }
 
 // ─── Arrow Shape (replaces tldraw native arrow) ─────────────────────
-// Stores absolute endpoints OR shape bindings. Renders straight or
-// elbow path with optional arrowheads and an editable middle label.
+// Properly extends ShapeUtil (NOT BaseBoxShapeUtil — arrows aren't boxes).
+// Stores absolute page-coordinate endpoints + optional shape-id bindings.
+// Path & arrowheads render in an overflow:visible SVG so they show outside
+// the shape's notional bounds.
 
 interface DirectoorArrowProps {
-  /** Absolute endpoints (canvas page coordinates) — used as fallback */
+  /** Absolute page-coordinate endpoints. Always populated. */
   startX: number;
   startY: number;
   endX: number;
   endY: number;
-  /** Optional binding to source shape (tldraw shape id as string, or empty) */
+  /** Optional bindings to source/target shapes. Empty string = unbound. */
   fromShapeId: string;
   toShapeId: string;
-  /** Side anchor on the bound shape: top|right|bottom|left|auto */
   fromAnchor: "top" | "right" | "bottom" | "left" | "auto";
   toAnchor: "top" | "right" | "bottom" | "left" | "auto";
   color: string;
@@ -925,178 +939,240 @@ const arrowDefaults: DirectoorArrowProps = {
 
 export type DirectoorArrowShape = TLBaseShape<"directoor-arrow", DirectoorArrowProps>;
 
-/** Compute the anchor point on a shape's bounding box for a given side */
-function anchorOnBounds(b: { x: number; y: number; w: number; h: number }, side: DirectoorArrowProps["fromAnchor"], otherPoint: { x: number; y: number }): { x: number; y: number } {
+/** Pick the anchor point on a shape's page bounds for a given side. */
+function anchorOnBounds(
+  b: { x: number; y: number; w: number; h: number },
+  side: DirectoorArrowProps["fromAnchor"],
+  otherPoint: { x: number; y: number },
+): { x: number; y: number } {
   if (side === "top")    return { x: b.x + b.w / 2, y: b.y };
   if (side === "bottom") return { x: b.x + b.w / 2, y: b.y + b.h };
   if (side === "left")   return { x: b.x,           y: b.y + b.h / 2 };
   if (side === "right")  return { x: b.x + b.w,     y: b.y + b.h / 2 };
-  // auto: pick the closest of the 4 sides to the other endpoint
+  // auto: pick the side closest to `otherPoint`
   const cx = b.x + b.w / 2;
   const cy = b.y + b.h / 2;
   const dx = otherPoint.x - cx;
   const dy = otherPoint.y - cy;
   if (Math.abs(dx) > Math.abs(dy)) {
-    return dx > 0
-      ? { x: b.x + b.w, y: cy }
-      : { x: b.x,       y: cy };
+    return dx > 0 ? { x: b.x + b.w, y: cy } : { x: b.x, y: cy };
   }
-  return dy > 0
-    ? { x: cx, y: b.y + b.h }
-    : { x: cx, y: b.y };
+  return dy > 0 ? { x: cx, y: b.y + b.h } : { x: cx, y: b.y };
 }
 
-export class DirectoorArrowShapeUtil extends BaseBoxShapeUtil<DirectoorArrowShape> {
+export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
   static override type = "directoor-arrow" as const;
   static override props = arrowProps as RecordProps<DirectoorArrowShape>;
 
   override canEdit(): boolean { return true; }
+  override canResize(): boolean { return false; }
+  override hideResizeHandles(): boolean { return true; }
+  override hideRotateHandle(): boolean { return true; }
 
   override getDefaultProps(): DirectoorArrowProps {
     return arrowDefaults;
   }
 
-  /** Geometry: bounding box of the path. Used for selection/hit-testing. */
-  override getGeometry(shape: DirectoorArrowShape): Geometry2d {
-    const { effectiveStart, effectiveEnd } = this.getEffectiveEndpoints(shape);
-    const minX = Math.min(effectiveStart.x, effectiveEnd.x) - shape.x;
-    const minY = Math.min(effectiveStart.y, effectiveEnd.y) - shape.y;
-    const maxX = Math.max(effectiveStart.x, effectiveEnd.x) - shape.x;
-    const maxY = Math.max(effectiveStart.y, effectiveEnd.y) - shape.y;
-    return new Rectangle2d({
-      x: minX,
-      y: minY,
-      width: Math.max(2, maxX - minX),
-      height: Math.max(2, maxY - minY),
-      isFilled: false,
-    });
-  }
-
   /** Resolve the actual page-coordinate endpoints, accounting for bindings. */
-  getEffectiveEndpoints(shape: DirectoorArrowShape): { effectiveStart: { x: number; y: number }; effectiveEnd: { x: number; y: number } } {
+  computeEndpoints(shape: DirectoorArrowShape): { sx: number; sy: number; ex: number; ey: number } {
     const editor = this.editor;
     const props = shape.props;
+    // NaN guards — validate every numeric prop before use
+    const safe = (n: unknown, fallback: number) => Number.isFinite(n as number) ? (n as number) : fallback;
+    let sx = safe(props.startX, 0);
+    let sy = safe(props.startY, 0);
+    let ex = safe(props.endX, 200);
+    let ey = safe(props.endY, 0);
 
-    // Compute "other point" for auto-anchor first (use absolute endpoints as a hint)
-    let absStart = { x: props.startX, y: props.startY };
-    let absEnd = { x: props.endX, y: props.endY };
+    // Tentative "other points" for auto-anchor
+    const tentativeEnd = (() => {
+      if (!props.toShapeId) return { x: ex, y: ey };
+      const b = editor.getShapePageBounds(props.toShapeId as never);
+      return b ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : { x: ex, y: ey };
+    })();
 
-    let effectiveStart = absStart;
-    let effectiveEnd = absEnd;
-
-    // If bound to source shape, snap start to its anchor
     if (props.fromShapeId) {
-      const fromShape = editor.getShape(props.fromShapeId as never);
-      if (fromShape) {
-        const fromBounds = editor.getShapePageBounds(fromShape.id);
-        if (fromBounds) {
-          // Use the (possibly bound) end as the "other point" for auto-anchor
-          const other = props.toShapeId
-            ? (() => {
-                const ts = editor.getShape(props.toShapeId as never);
-                const tb = ts ? editor.getShapePageBounds(ts.id) : null;
-                return tb ? { x: tb.x + tb.w / 2, y: tb.y + tb.h / 2 } : absEnd;
-              })()
-            : absEnd;
-          effectiveStart = anchorOnBounds(fromBounds, props.fromAnchor, other);
-        }
+      const b = editor.getShapePageBounds(props.fromShapeId as never);
+      if (b) {
+        const a = anchorOnBounds(b, props.fromAnchor, tentativeEnd);
+        sx = a.x; sy = a.y;
       }
     }
     if (props.toShapeId) {
-      const toShape = editor.getShape(props.toShapeId as never);
-      if (toShape) {
-        const toBounds = editor.getShapePageBounds(toShape.id);
-        if (toBounds) {
-          effectiveEnd = anchorOnBounds(toBounds, props.toAnchor, effectiveStart);
-        }
+      const b = editor.getShapePageBounds(props.toShapeId as never);
+      if (b) {
+        const a = anchorOnBounds(b, props.toAnchor, { x: sx, y: sy });
+        ex = a.x; ey = a.y;
       }
     }
-    return { effectiveStart, effectiveEnd };
+    return { sx, sy, ex, ey };
+  }
+
+  /** Geometry — used for hit-testing and selection bounds. */
+  override getGeometry(shape: DirectoorArrowShape): Geometry2d {
+    const { sx, sy, ex, ey } = this.computeEndpoints(shape);
+    const shapeX = Number.isFinite(shape.x) ? shape.x : 0;
+    const shapeY = Number.isFinite(shape.y) ? shape.y : 0;
+    const minX = Math.min(sx, ex) - shapeX;
+    const minY = Math.min(sy, ey) - shapeY;
+    const w = Math.max(8, Math.abs(ex - sx));
+    const h = Math.max(8, Math.abs(ey - sy));
+    return new Rectangle2d({ x: minX, y: minY, width: w, height: h, isFilled: true });
   }
 
   override component(shape: DirectoorArrowShape) {
-    const { color, strokeWidth, dash, startHead, endHead, path, label } = shape.props;
-    const dashArray = strokeDashArray(dash);
-    const { effectiveStart, effectiveEnd } = this.getEffectiveEndpoints(shape);
-
-    // Convert page coords → coords relative to shape origin
-    const sx = effectiveStart.x - shape.x;
-    const sy = effectiveStart.y - shape.y;
-    const ex = effectiveEnd.x - shape.x;
-    const ey = effectiveEnd.y - shape.y;
-
-    const minX = Math.min(sx, ex) - 20;
-    const minY = Math.min(sy, ey) - 20;
-    const maxX = Math.max(sx, ex) + 20;
-    const maxY = Math.max(sy, ey) + 20;
-    const svgW = Math.max(40, maxX - minX);
-    const svgH = Math.max(40, maxY - minY);
-
-    // Translate to local SVG coords
-    const localSx = sx - minX;
-    const localSy = sy - minY;
-    const localEx = ex - minX;
-    const localEy = ey - minY;
-
-    // Build path
-    let pathD: string;
-    if (path === "elbow") {
-      const midX = (localSx + localEx) / 2;
-      pathD = `M ${localSx} ${localSy} L ${midX} ${localSy} L ${midX} ${localEy} L ${localEx} ${localEy}`;
-    } else {
-      pathD = `M ${localSx} ${localSy} L ${localEx} ${localEy}`;
-    }
-
-    // Compute arrowhead angle (using last segment direction)
-    const headSize = 10;
-    const lastSegStartX = path === "elbow" ? (localSx + localEx) / 2 : localSx;
-    const lastSegStartY = path === "elbow" ? localEy : localSy;
-    const angleEnd = Math.atan2(localEy - lastSegStartY, localEx - lastSegStartX);
-    const firstSegEndX = path === "elbow" ? (localSx + localEx) / 2 : localEx;
-    const firstSegEndY = path === "elbow" ? localSy : localEy;
-    const angleStart = Math.atan2(localSy - firstSegEndY, localSx - firstSegEndX);
-
-    const headPath = (x: number, y: number, angle: number) => {
-      const a1 = angle + Math.PI - Math.PI / 6;
-      const a2 = angle + Math.PI + Math.PI / 6;
-      return `M ${x} ${y} L ${x + headSize * Math.cos(a1)} ${y + headSize * Math.sin(a1)} L ${x + headSize * Math.cos(a2)} ${y + headSize * Math.sin(a2)} Z`;
-    };
-
-    // Label position — middle of path
-    const labelX = path === "elbow" ? (localSx + localEx) / 2 : (localSx + localEx) / 2;
-    const labelY = path === "elbow" ? (localSy + localEy) / 2 : (localSy + localEy) / 2;
-
-    return (
-      <HTMLContainer style={{ width: svgW, height: svgH, position: "relative", pointerEvents: "all", transform: `translate(${minX}px, ${minY}px)` }}>
-        <svg width={svgW} height={svgH} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-          <path d={pathD} fill="none" stroke={color} strokeWidth={strokeWidth} strokeDasharray={dashArray} strokeLinecap="round" strokeLinejoin="round" />
-          {endHead === "arrow" && (
-            <path d={headPath(localEx, localEy, angleEnd)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
-          )}
-          {startHead === "arrow" && (
-            <path d={headPath(localSx, localSy, angleStart)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
-          )}
-        </svg>
-        {/* Editable label overlay */}
-        <ArrowLabel shapeId={shape.id} label={label} cx={labelX} cy={labelY} />
-      </HTMLContainer>
-    );
+    return <DirectoorArrowComponent util={this} shape={shape} />;
   }
 
   override indicator(shape: DirectoorArrowShape) {
-    const { effectiveStart, effectiveEnd } = this.getEffectiveEndpoints(shape);
-    const sx = effectiveStart.x - shape.x;
-    const sy = effectiveStart.y - shape.y;
-    const ex = effectiveEnd.x - shape.x;
-    const ey = effectiveEnd.y - shape.y;
-    return <line x1={sx} y1={sy} x2={ex} y2={ey} strokeWidth={2} />;
+    const { sx, sy, ex, ey } = this.computeEndpoints(shape);
+    const lsx = sx - shape.x;
+    const lsy = sy - shape.y;
+    const lex = ex - shape.x;
+    const ley = ey - shape.y;
+    return <line x1={lsx} y1={lsy} x2={lex} y2={ley} strokeWidth={2} />;
   }
 }
 
-/** Editable label that floats over the middle of the arrow path */
-function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string; cx: number; cy: number }) {
+/**
+ * Arrow component — separated so we can use hooks (useEditor, useValue).
+ *
+ * Subscribes to bound shape positions via useValue, so the arrow re-renders
+ * when either endpoint shape moves.
+ */
+function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUtil; shape: DirectoorArrowShape }) {
   const editor = useEditor();
-  const isEditing = editor.getEditingShapeId() === shapeId;
+  const { color, strokeWidth, dash, startHead, endHead, path, label } = shape.props;
+  const dashArray = strokeDashArray(dash);
+
+  // useValue subscribes to ALL relevant atoms (shape props + bound shape positions),
+  // so the arrow follows bound shapes when they move.
+  const endpoints = useValue(
+    "arrow-endpoints",
+    () => util.computeEndpoints(shape),
+    [util, shape],
+  );
+
+  const isEditing = useValue(
+    "isEditing",
+    () => editor.getEditingShapeId() === shape.id,
+    [editor, shape.id],
+  );
+
+  // Convert to shape-local coordinates
+  const sx = endpoints.sx - shape.x;
+  const sy = endpoints.sy - shape.y;
+  const ex = endpoints.ex - shape.x;
+  const ey = endpoints.ey - shape.y;
+
+  // SVG canvas — give it big padding so arrowheads & label aren't clipped
+  const PAD = 30;
+  const minX = Math.min(sx, ex) - PAD;
+  const minY = Math.min(sy, ey) - PAD;
+  const maxX = Math.max(sx, ex) + PAD;
+  const maxY = Math.max(sy, ey) + PAD;
+  const svgW = maxX - minX;
+  const svgH = maxY - minY;
+
+  // Coordinates inside the SVG
+  const lsx = sx - minX;
+  const lsy = sy - minY;
+  const lex = ex - minX;
+  const ley = ey - minY;
+
+  // Build path
+  let pathD: string;
+  if (path === "elbow") {
+    const midX = (lsx + lex) / 2;
+    pathD = `M ${lsx} ${lsy} L ${midX} ${lsy} L ${midX} ${ley} L ${lex} ${ley}`;
+  } else {
+    pathD = `M ${lsx} ${lsy} L ${lex} ${ley}`;
+  }
+
+  // Arrowhead angles
+  const headSize = 11;
+  const lastFromX = path === "elbow" ? (lsx + lex) / 2 : lsx;
+  const lastFromY = path === "elbow" ? ley : lsy;
+  const angleEnd = Math.atan2(ley - lastFromY, lex - lastFromX);
+  const firstToX = path === "elbow" ? (lsx + lex) / 2 : lex;
+  const firstToY = path === "elbow" ? lsy : ley;
+  const angleStart = Math.atan2(lsy - firstToY, lsx - firstToX);
+
+  const headPath = (x: number, y: number, angle: number) => {
+    const a1 = angle + Math.PI - Math.PI / 6;
+    const a2 = angle + Math.PI + Math.PI / 6;
+    return `M ${x} ${y} L ${x + headSize * Math.cos(a1)} ${y + headSize * Math.sin(a1)} L ${x + headSize * Math.cos(a2)} ${y + headSize * Math.sin(a2)} Z`;
+  };
+
+  // Label position — middle of path
+  const labelX = (lsx + lex) / 2;
+  const labelY = (lsy + ley) / 2;
+
+  return (
+    <HTMLContainer style={{ width: 1, height: 1, pointerEvents: "none", overflow: "visible" }}>
+      <svg
+        style={{
+          position: "absolute",
+          left: minX,
+          top: minY,
+          width: svgW,
+          height: svgH,
+          overflow: "visible",
+          pointerEvents: "none",
+        }}
+      >
+        {/* Invisible wide hit area for clicking */}
+        <path
+          d={pathD}
+          fill="none"
+          stroke="transparent"
+          strokeWidth={Math.max(20, strokeWidth + 16)}
+          style={{ pointerEvents: "stroke" }}
+        />
+        {/* Visible path */}
+        <path
+          d={pathD}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={dashArray}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ pointerEvents: "stroke" }}
+        />
+        {endHead === "arrow" && (
+          <path d={headPath(lex, ley, angleEnd)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
+        )}
+        {startHead === "arrow" && (
+          <path d={headPath(lsx, lsy, angleStart)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
+        )}
+      </svg>
+      <ArrowLabel
+        shapeId={shape.id}
+        label={label}
+        isEditing={isEditing}
+        absX={minX + labelX}
+        absY={minY + labelY}
+      />
+    </HTMLContainer>
+  );
+}
+
+/** Editable label that floats over the middle of the arrow path */
+function ArrowLabel({
+  shapeId,
+  label,
+  isEditing,
+  absX,
+  absY,
+}: {
+  shapeId: string;
+  label: string;
+  isEditing: boolean;
+  absX: number;
+  absY: number;
+}) {
+  const editor = useEditor();
   const [draft, setDraft] = useState(label);
   const inputRef = useRef<HTMLDivElement | null>(null);
 
@@ -1119,7 +1195,7 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
   }, [isEditing, label]);
 
   const commit = () => {
-    const shape = editor.getShape(shapeId);
+    const shape = editor.getShape(shapeId as never);
     if (!shape) return;
     const trimmed = draft.trim();
     if (trimmed !== label) {
@@ -1131,18 +1207,6 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
     }
     editor.setEditingShape(null);
   };
-
-  // Empty label & not editing → render a tiny invisible click target
-  if (!label && !isEditing) {
-    return (
-      <div
-        style={{
-          position: "absolute", left: cx - 10, top: cy - 8, width: 20, height: 16,
-          pointerEvents: "none",
-        }}
-      />
-    );
-  }
 
   if (isEditing) {
     return (
@@ -1162,7 +1226,8 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
         }}
         style={{
           position: "absolute",
-          left: cx, top: cy,
+          left: absX,
+          top: absY,
           transform: "translate(-50%, -50%)",
           minWidth: 60,
           padding: "2px 8px",
@@ -1170,7 +1235,7 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
           fontSize: 12,
           fontWeight: 600,
           color: "#0f172a",
-          background: "rgba(255,255,255,0.95)",
+          background: "rgba(255,255,255,0.98)",
           outline: "2px solid #3b82f6",
           outlineOffset: 1,
           borderRadius: 4,
@@ -1179,6 +1244,7 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
           pointerEvents: "all",
           userSelect: "text",
           cursor: "text",
+          zIndex: 10,
         }}
       >
         {label}
@@ -1186,18 +1252,23 @@ function ArrowLabel({ shapeId, label, cx, cy }: { shapeId: string; label: string
     );
   }
 
+  // Always render a label container — empty arrows still need a click target
+  // so users can double-click to add a label.
   return (
     <div
       style={{
         position: "absolute",
-        left: cx, top: cy,
+        left: absX,
+        top: absY,
         transform: "translate(-50%, -50%)",
-        padding: "1px 6px",
+        minWidth: 24,
+        minHeight: 16,
+        padding: label ? "1px 6px" : "0",
         fontFamily: "Inter, system-ui, sans-serif",
         fontSize: 12,
         fontWeight: 600,
         color: "#0f172a",
-        background: "rgba(255,255,255,0.92)",
+        background: label ? "rgba(255,255,255,0.92)" : "transparent",
         borderRadius: 4,
         pointerEvents: "none",
         whiteSpace: "nowrap",
