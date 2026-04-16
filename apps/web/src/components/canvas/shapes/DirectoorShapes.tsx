@@ -90,7 +90,7 @@ function EditableLabel({
   h,
   bottomAnchored = false,
 }: {
-  shapeId: string;
+  shapeId: import("tldraw").TLShapeId;
   label: string;
   w: number;
   h: number;
@@ -209,7 +209,7 @@ function EditableLabel({
 }
 
 // Kept for backward compat with existing call sites that don't need edit
-function ShapeLabel({ shapeId, label, w, h }: { shapeId: string; label: string; w: number; h: number }) {
+function ShapeLabel({ shapeId, label, w, h }: { shapeId: import("tldraw").TLShapeId; label: string; w: number; h: number }) {
   return <EditableLabel shapeId={shapeId} label={label} w={w} h={h} />;
 }
 
@@ -224,7 +224,7 @@ function StackLabel({
   innerW,
   innerH,
 }: {
-  shapeId: string;
+  shapeId: import("tldraw").TLShapeId;
   label: string;
   topOffset: number;
   innerW: number;

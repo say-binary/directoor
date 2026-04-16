@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { logCommand, resolveUserId } from "@/lib/command-logger";
 
 /**
  * POST /api/text
@@ -51,9 +52,12 @@ function estimateDimensions(text: string): { width: number; height: number } {
 }
 
 export async function POST(request: NextRequest) {
+  const t0 = Date.now();
+  const userId = await resolveUserId(request.headers.get("authorization"));
+  let prompt = "";
   try {
-    const body = (await request.json()) as { prompt?: string };
-    const prompt = (body.prompt ?? "").trim();
+    const body = (await request.json()) as { prompt?: string; canvasId?: string };
+    prompt = (body.prompt ?? "").trim();
     if (!prompt) {
       return NextResponse.json({ error: "Missing prompt" }, { status: 400 });
     }
@@ -75,8 +79,14 @@ export async function POST(request: NextRequest) {
 
     const textBlock = message.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
+      const logId = await logCommand({
+        userId, canvasId: body.canvasId ?? null,
+        route: "text", mode: "text", prompt,
+        model: MODEL, latencyMs: Date.now() - t0,
+        status: "error", errorMessage: "No text block in response",
+      });
       return NextResponse.json(
-        { error: "No response from AI" },
+        { error: "No response from AI", logId },
         { status: 500 },
       );
     }
@@ -84,13 +94,31 @@ export async function POST(request: NextRequest) {
     const text = textBlock.text.trim();
     const { width, height } = estimateDimensions(text);
 
+    const logId = await logCommand({
+      userId, canvasId: body.canvasId ?? null,
+      route: "text", mode: "text", prompt,
+      model: MODEL,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0,
+      latencyMs: Date.now() - t0,
+      status: "ok",
+      responsePreview: text,
+    });
+
     return NextResponse.json({
       text,
       suggestedWidth: width,
       suggestedHeight: height,
+      logId,
     });
   } catch (err) {
     console.error("Text API error:", err);
+    await logCommand({
+      userId, route: "text", mode: "text", prompt,
+      model: MODEL, latencyMs: Date.now() - t0,
+      status: "error",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 },

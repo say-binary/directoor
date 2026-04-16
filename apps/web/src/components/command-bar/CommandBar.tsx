@@ -4,10 +4,13 @@ import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "re
 import { Command, Send, Loader2 } from "lucide-react";
 import type { Editor } from "tldraw";
 import { executeActions } from "@/lib/tldraw-bridge";
+import { apiFetch } from "@/lib/api-client";
+import { FeedbackBar } from "./FeedbackBar";
 
 interface CommandBarProps {
   editor: Editor | null;
   store: ReturnType<typeof import("@directoor/core").createCanvasStore>;
+  canvasId: string | null;
   onAnimateCommand?: (sequence: number[]) => void;
   animateHint?: string;
 }
@@ -211,13 +214,14 @@ function tryDeterministicRoute(
   return { handled: false, message: "" };
 }
 
-export function CommandBar({ editor, store, onAnimateCommand, animateHint }: CommandBarProps) {
+export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateHint }: CommandBarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastMessage, setLastMessage] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [lastLogId, setLastLogId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Global Cmd+K / Ctrl+K shortcut to open command bar
@@ -270,8 +274,9 @@ export function CommandBar({ editor, store, onAnimateCommand, animateHint }: Com
     setLastMessage("");
 
     try {
-      const response = await fetch("/api/command", {
+      const response = await apiFetch("/api/command", {
         method: "POST",
+        canvasId,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command: trimmed,
@@ -285,6 +290,7 @@ export function CommandBar({ editor, store, onAnimateCommand, animateHint }: Com
       }
 
       const result = await response.json();
+      if (result.logId) setLastLogId(result.logId);
 
       if (result.error) {
         setLastMessage(result.error);
@@ -409,6 +415,9 @@ export function CommandBar({ editor, store, onAnimateCommand, animateHint }: Com
         >
           {lastMessage}
         </p>
+      )}
+      {lastLogId && !isProcessing && (
+        <FeedbackBar logId={lastLogId} className="mt-2" />
       )}
       <p className="mt-1 text-center text-xs text-slate-400">
         Press <kbd className="font-mono">Enter</kbd> to send,{" "}

@@ -643,6 +643,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
         <InlineCommand
           editor={editor}
           store={store}
+          canvasId={canvasId ?? null}
           canvasPosition={inlineCommand.canvasPosition}
           screenPosition={inlineCommand.screenPosition}
           onClose={() => setInlineCommand(null)}
@@ -653,6 +654,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
       <CommandBar
         editor={editor}
         store={store}
+        canvasId={canvasId ?? null}
         onAnimateCommand={handleAnimateCommand}
         animateHint={hasEditingRegion ? "Type: animate 1,2,3,4" : undefined}
       />

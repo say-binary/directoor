@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { logCommand, resolveUserId } from "@/lib/command-logger";
 
 /**
  * POST /api/classify-intent
@@ -87,22 +88,47 @@ async function classifyViaLLM(query: string): Promise<IntentMode> {
 // ─── Endpoint ─────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
+  const t0 = Date.now();
+  const userId = await resolveUserId(request.headers.get("authorization"));
+  let query = "";
   try {
-    const body = (await request.json()) as { query?: string };
-    const query = (body.query ?? "").trim();
+    const body = (await request.json()) as { query?: string; canvasId?: string };
+    query = (body.query ?? "").trim();
     if (!query) {
       return NextResponse.json({ mode: "diagram" as IntentMode });
     }
 
     const prefiltered = prefilter(query);
     if (prefiltered) {
+      // Cheap path — log without LLM cost
+      await logCommand({
+        userId, canvasId: body.canvasId ?? null,
+        route: "classify-intent", mode: "intent", prompt: query,
+        model: "prefilter", latencyMs: Date.now() - t0,
+        status: "ok",
+        responsePreview: prefiltered,
+      });
       return NextResponse.json({ mode: prefiltered, source: "prefilter" });
     }
 
     const mode = await classifyViaLLM(query);
+    await logCommand({
+      userId, canvasId: body.canvasId ?? null,
+      route: "classify-intent", mode: "intent", prompt: query,
+      model: "claude-haiku-4-5-20251001",
+      latencyMs: Date.now() - t0,
+      status: "ok",
+      responsePreview: mode,
+    });
     return NextResponse.json({ mode, source: "llm" });
   } catch (err) {
     console.error("classify-intent API error:", err);
+    await logCommand({
+      userId, route: "classify-intent", mode: "intent", prompt: query,
+      latencyMs: Date.now() - t0,
+      status: "error",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
     return NextResponse.json({ mode: "diagram" as IntentMode, source: "error" });
   }
 }

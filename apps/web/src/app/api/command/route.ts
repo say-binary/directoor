@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { CanvasAction, ContextSnapshot } from "@directoor/core";
 import { SYSTEM_PROMPT, detectPatterns } from "./prompts";
+import { logCommand, resolveUserId } from "@/lib/command-logger";
 
 /**
  * POST /api/command
@@ -33,12 +34,28 @@ interface CommandRequest {
   context: ContextSnapshot;
   /** Anchor position from double-click — objects should be placed relative to this point */
   anchorPosition?: { x: number; y: number };
+  /** Current canvas id (for command_logs join) */
+  canvasId?: string;
 }
 
 export async function POST(request: NextRequest) {
+  const t0 = Date.now();
+  const userId = await resolveUserId(request.headers.get("authorization"));
+  let cmdForLog = "";
+  let canvasIdForLog: string | null = null;
+  let contextForLog: Record<string, unknown> = {};
   try {
     const body = (await request.json()) as CommandRequest;
-    const { command, context, anchorPosition } = body;
+    const { command, context, anchorPosition, canvasId } = body;
+    cmdForLog = command ?? "";
+    canvasIdForLog = canvasId ?? null;
+    contextForLog = context
+      ? {
+          totalObjects: context.totalObjects,
+          totalConnections: context.totalConnections,
+          selected: context.selectedIds.length,
+        }
+      : {};
 
     if (!command || typeof command !== "string") {
       return NextResponse.json(
@@ -120,8 +137,15 @@ export async function POST(request: NextRequest) {
     // Extract text from the response
     const textBlock = message.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
+      const logId = await logCommand({
+        userId, canvasId: canvasIdForLog,
+        route: "command", mode: "diagram", prompt: cmdForLog,
+        contextMeta: contextForLog,
+        model: MODEL, latencyMs: Date.now() - t0,
+        status: "error", errorMessage: "No text block in response",
+      });
       return NextResponse.json(
-        { actions: [], error: "No response from AI" },
+        { actions: [], error: "No response from AI", logId },
         { status: 200 },
       );
     }
@@ -130,8 +154,19 @@ export async function POST(request: NextRequest) {
     const raw = parseWithTruncationRecovery(textBlock.text);
 
     if (!raw.actions) {
+      const logId = await logCommand({
+        userId, canvasId: canvasIdForLog,
+        route: "command", mode: "diagram", prompt: cmdForLog,
+        contextMeta: contextForLog,
+        model: MODEL,
+        inputTokens: message.usage?.input_tokens ?? 0,
+        outputTokens: message.usage?.output_tokens ?? 0,
+        latencyMs: Date.now() - t0,
+        status: "rejected", errorMessage: "Failed to parse AI response",
+        responsePreview: textBlock.text,
+      });
       return NextResponse.json(
-        { actions: [], error: "Failed to parse AI response" },
+        { actions: [], error: "Failed to parse AI response", logId },
         { status: 200 },
       );
     }
@@ -143,9 +178,30 @@ export async function POST(request: NextRequest) {
     if (raw.error) responseBody.error = raw.error;
     if (raw.truncated) responseBody.warning = `Response truncated — recovered ${processedActions.length} of ~${raw.estimatedTotal ?? "?"} actions. Try a simpler command.`;
 
+    const logId = await logCommand({
+      userId, canvasId: canvasIdForLog,
+      route: "command", mode: "diagram", prompt: cmdForLog,
+      contextMeta: { ...contextForLog, actionCount: processedActions.length, truncated: !!raw.truncated },
+      model: MODEL,
+      inputTokens: message.usage?.input_tokens ?? 0,
+      outputTokens: message.usage?.output_tokens ?? 0,
+      latencyMs: Date.now() - t0,
+      status: "ok",
+      responsePreview: textBlock.text,
+    });
+    responseBody.logId = logId;
+
     return NextResponse.json(responseBody);
   } catch (error) {
     console.error("Command API error:", error);
+    await logCommand({
+      userId, canvasId: canvasIdForLog,
+      route: "command", mode: "diagram", prompt: cmdForLog,
+      contextMeta: contextForLog,
+      model: MODEL, latencyMs: Date.now() - t0,
+      status: "error",
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { actions: [], error: "Internal server error" },
       { status: 500 },
@@ -235,7 +291,7 @@ function normalizeActions(rawActions: Record<string, unknown>[]): CanvasAction[]
                 undefined,
             },
           },
-        } as CanvasAction);
+        } as unknown as CanvasAction);
         break;
       }
 

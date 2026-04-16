@@ -5,6 +5,8 @@ import { Loader2, Check, X } from "lucide-react";
 import type { Editor } from "tldraw";
 import { createShapeId } from "tldraw";
 import { useImageLibrary, type LibraryImage } from "@/lib/image-library";
+import { apiFetch } from "@/lib/api-client";
+import { FeedbackBar } from "./FeedbackBar";
 
 export interface ImageHit {
   id: string;
@@ -21,6 +23,7 @@ export interface ImageHit {
 interface InlineImagePickerProps {
   editor: Editor;
   query: string;
+  canvasId: string | null;
   canvasPosition: { x: number; y: number };
   screenPosition: { x: number; y: number };
   onClose: () => void;
@@ -40,6 +43,7 @@ const TILE_GAP = 16;
 export function InlineImagePicker({
   editor,
   query,
+  canvasId,
   canvasPosition,
   screenPosition,
   onClose,
@@ -48,6 +52,8 @@ export function InlineImagePicker({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [logId, setLogId] = useState<string | null>(null);
+  const [picked, setPicked] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addToLibrary = useImageLibrary((s) => s.addMany);
 
@@ -56,13 +62,15 @@ export function InlineImagePicker({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/image-search", {
+        const res = await apiFetch("/api/image-search", {
           method: "POST",
+          canvasId,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query }),
         });
-        const data = (await res.json()) as { results?: ImageHit[]; error?: string };
+        const data = (await res.json()) as { results?: ImageHit[]; error?: string; logId?: string };
         if (cancelled) return;
+        if (data.logId) setLogId(data.logId);
         if (!res.ok || data.error) {
           setError(data.error ?? `Search failed (${res.status})`);
           setResults([]);
@@ -181,7 +189,8 @@ export function InlineImagePicker({
     }));
     addToLibrary(libEntries);
 
-    onClose();
+    setPicked(true);
+    // Don't auto-close — keep open for thumbs-up/down feedback
   };
 
   // Position the picker beneath the click point, clamped to viewport
@@ -254,12 +263,19 @@ export function InlineImagePicker({
               </p>
               <button
                 onClick={handleConfirm}
-                disabled={selected.size === 0}
+                disabled={selected.size === 0 || picked}
                 className="rounded-lg bg-blue-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-blue-500"
               >
-                Add {selected.size > 0 ? `(${selected.size})` : ""}
+                {picked ? "Added" : `Add ${selected.size > 0 ? `(${selected.size})` : ""}`}
               </button>
             </div>
+            {picked && logId && (
+              <FeedbackBar
+                logId={logId}
+                onDone={onClose}
+                className="mt-3"
+              />
+            )}
           </>
         )}
       </div>

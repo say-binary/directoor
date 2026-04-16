@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { logCommand, resolveUserId } from "@/lib/command-logger";
 
 /**
  * POST /api/image-search
@@ -40,15 +41,19 @@ interface OpenverseHit {
 }
 
 export async function POST(request: NextRequest) {
+  const t0 = Date.now();
+  const userId = await resolveUserId(request.headers.get("authorization"));
+  let query = "";
   try {
-    const body = (await request.json()) as { query?: string };
-    const query = (body.query ?? "").trim();
+    const body = (await request.json()) as { query?: string; canvasId?: string };
+    query = (body.query ?? "").trim();
     if (!query) {
       return NextResponse.json({ error: "Missing query" }, { status: 400 });
     }
     if (query.length > 200) {
       return NextResponse.json({ error: "Query too long" }, { status: 400 });
     }
+    const canvasId = body.canvasId ?? null;
 
     const url = new URL("https://api.openverse.org/v1/images/");
     url.searchParams.set("q", query);
@@ -67,6 +72,13 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       console.error("Openverse error:", response.status, response.statusText);
+      await logCommand({
+        userId, canvasId,
+        route: "image-search", mode: "image", prompt: query,
+        model: "openverse", latencyMs: Date.now() - t0,
+        status: "error",
+        errorMessage: `Openverse ${response.status}`,
+      });
       return NextResponse.json(
         { error: `Image search failed (${response.status})`, results: [] },
         { status: 502 },
@@ -88,9 +100,24 @@ export async function POST(request: NextRequest) {
       source: h.source ?? h.foreign_landing_url,
     }));
 
-    return NextResponse.json({ results });
+    const logId = await logCommand({
+      userId, canvasId,
+      route: "image-search", mode: "image", prompt: query,
+      model: "openverse", latencyMs: Date.now() - t0,
+      status: "ok",
+      contextMeta: { hitCount: results.length },
+      responsePreview: results.map((r) => r.title).join(" | ").slice(0, 800),
+    });
+
+    return NextResponse.json({ results, logId });
   } catch (err) {
     console.error("Image search error:", err);
+    await logCommand({
+      userId, route: "image-search", mode: "image", prompt: query,
+      model: "openverse", latencyMs: Date.now() - t0,
+      status: "error",
+      errorMessage: err instanceof Error ? err.message : String(err),
+    });
     return NextResponse.json(
       { error: "Internal server error", results: [] },
       { status: 500 },

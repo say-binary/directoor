@@ -5,10 +5,13 @@ import { Command, Send, Loader2, MapPin } from "lucide-react";
 import type { Editor } from "tldraw";
 import { executeActions } from "@/lib/tldraw-bridge";
 import { InlineImagePicker } from "./InlineImagePicker";
+import { apiFetch } from "@/lib/api-client";
+import { FeedbackBar } from "./FeedbackBar";
 
 interface InlineCommandProps {
   editor: Editor;
   store: ReturnType<typeof import("@directoor/core").createCanvasStore>;
+  canvasId: string | null;
   canvasPosition: { x: number; y: number };
   screenPosition: { x: number; y: number };
   onClose: () => void;
@@ -21,6 +24,7 @@ interface InlineCommandProps {
 export function InlineCommand({
   editor,
   store,
+  canvasId,
   canvasPosition,
   screenPosition,
   onClose,
@@ -29,6 +33,7 @@ export function InlineCommand({
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastMessage, setLastMessage] = useState("");
   const [imageQuery, setImageQuery] = useState<string | null>(null);
+  const [lastLogId, setLastLogId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -69,8 +74,9 @@ export function InlineCommand({
       // The classifier runs a cheap regex prefilter first, and only
       // falls back to an LLM call for ambiguous queries.
       setLastMessage("Understanding…");
-      const intentRes = await fetch("/api/classify-intent", {
+      const intentRes = await apiFetch("/api/classify-intent", {
         method: "POST",
+        canvasId,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query: trimmed }),
       });
@@ -104,8 +110,9 @@ export function InlineCommand({
 
     async function handleTextGeneration(prompt: string) {
       setLastMessage("Writing…");
-      const res = await fetch("/api/text", {
+      const res = await apiFetch("/api/text", {
         method: "POST",
+        canvasId,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
@@ -118,11 +125,13 @@ export function InlineCommand({
         suggestedWidth?: number;
         suggestedHeight?: number;
         error?: string;
+        logId?: string;
       };
       if (result.error || !result.text) {
         setLastMessage(result.error ?? "No text generated");
         return;
       }
+      if (result.logId) setLastLogId(result.logId);
       // Create a prose-mode DirectoorText at the click position
       const w = result.suggestedWidth ?? 440;
       const h = result.suggestedHeight ?? 120;
@@ -151,8 +160,9 @@ export function InlineCommand({
 
     async function handleDiagramGeneration(command: string) {
       setLastMessage("Drawing…");
-      const response = await fetch("/api/command", {
+      const response = await apiFetch("/api/command", {
         method: "POST",
+        canvasId,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           command,
@@ -165,6 +175,7 @@ export function InlineCommand({
         return;
       }
       const result = await response.json();
+      if (result.logId) setLastLogId(result.logId);
       if (result.error) {
         setLastMessage(result.error);
         return;
@@ -172,12 +183,12 @@ export function InlineCommand({
       if (result.actions && Array.isArray(result.actions) && result.actions.length > 0) {
         executeActions(result.actions, store, editor);
         setLastMessage(`Done! ${result.actions.length} action(s) executed.`);
-        setTimeout(onClose, 800);
+        // Don't auto-close — keep open so the user can rate the result
       } else {
         setLastMessage("No actions to execute.");
       }
     }
-  }, [input, isProcessing, store, editor, canvasPosition, onClose]);
+  }, [input, isProcessing, store, editor, canvasId, canvasPosition, onClose]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -192,6 +203,7 @@ export function InlineCommand({
       <InlineImagePicker
         editor={editor}
         query={imageQuery}
+        canvasId={canvasId}
         canvasPosition={canvasPosition}
         screenPosition={screenPosition}
         onClose={onClose}
@@ -255,6 +267,13 @@ export function InlineCommand({
           >
             {lastMessage}
           </p>
+        )}
+        {lastLogId && !isProcessing && (
+          <FeedbackBar
+            logId={lastLogId}
+            onDone={() => setTimeout(onClose, 500)}
+            className="mt-2"
+          />
         )}
         <p className="mt-1 text-center text-xs text-slate-400">
           Press <kbd className="font-mono">Enter</kbd> to create here,{" "}

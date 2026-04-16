@@ -224,7 +224,7 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
 
   // ─── Number Badges ───────────────────────────────────────────
 
-  const [badgePositions, setBadgePositions] = useState<Array<{ num: number; x: number; y: number }>>([]);
+  const [badgePositions, setBadgePositions] = useState<Array<{ num: number; x: number; y: number; isArrow: boolean }>>([]);
 
   useEffect(() => {
     if (!region.isEditMode) {
