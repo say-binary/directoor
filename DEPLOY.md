@@ -8,17 +8,20 @@ In the Supabase SQL editor (or `supabase db push` if you've wired the CLI), run 
 
 - `003_user_images.sql` — image library table
 - `004_command_logs.sql` — proprietary command log + thumbs feedback
-- `005_subscriptions.sql` — Stripe subscription state
+- `005_subscriptions.sql` — subscription state table
+- `006_polar_rename.sql` — switches the column names from `stripe_*` to `polar_*` (we moved off Stripe because it's invite-only for Indian businesses)
 
-## 2. Stripe (optional — skip if you're not charging yet)
+## 2. Polar.sh (optional — skip if you're not charging yet)
 
-Without Stripe, the app runs as "free for everyone": all features work, but the **Upgrade to Pro** button shows "Billing coming soon", caps still apply (3 canvases / 50 LLM calls per day), and exports get the watermark.
+Without Polar, the app runs as "free for everyone": all features work, but the **Upgrade to Pro** button shows "Billing coming soon", caps still apply (3 canvases / 50 LLM calls per day), and exports get the watermark.
 
 To turn billing on:
 
-1. https://dashboard.stripe.com/apikeys → copy the **Secret key** → `STRIPE_SECRET_KEY`
-2. https://dashboard.stripe.com/products → create a recurring product **Directoor Pro / $12 monthly** → copy the price id (`price_…`) → `STRIPE_PRO_PRICE_ID`
-3. https://dashboard.stripe.com/webhooks → add endpoint `https://YOUR-DOMAIN/api/stripe/webhook` listening to `customer.subscription.created`, `customer.subscription.updated`, `customer.subscription.deleted` → copy the signing secret (`whsec_…`) → `STRIPE_WEBHOOK_SECRET`
+1. Sign up at https://polar.sh — works globally including India, no business-type restrictions. Polar is the Merchant of Record, so they handle global tax/VAT for you.
+2. **Settings → Developers → New token** → create an Organization Access Token with `checkouts:write`, `customer_sessions:write`, `subscriptions:read` scopes → `POLAR_ACCESS_TOKEN`
+3. **Products → New product** → recurring monthly $12 "Directoor Pro" → copy the product UUID → `POLAR_PRO_PRODUCT_ID`
+4. **Settings → Webhooks → Add endpoint** → URL `https://YOUR-DOMAIN/api/polar/webhook`, format `Raw`, subscribe to all `subscription.*` events → copy the signing secret → `POLAR_WEBHOOK_SECRET`
+5. (Optional) Set `POLAR_SERVER=sandbox` while testing — defaults to `production` on Vercel.
 
 ## 3. Vercel project
 
@@ -38,9 +41,10 @@ To turn billing on:
    | `GOOGLE_CLIENT_ID` | yes (for OAuth) |
    | `GOOGLE_CLIENT_SECRET` | yes (for OAuth) |
    | `GOOGLE_AI_API_KEY` | optional |
-   | `STRIPE_SECRET_KEY` | optional |
-   | `STRIPE_PRO_PRICE_ID` | optional |
-   | `STRIPE_WEBHOOK_SECRET` | optional |
+   | `POLAR_ACCESS_TOKEN` | optional |
+   | `POLAR_PRO_PRODUCT_ID` | optional |
+   | `POLAR_WEBHOOK_SECRET` | optional |
+   | `POLAR_SERVER` | optional (defaults to `production` in prod) |
 
 7. Hit **Deploy**.
 
@@ -54,7 +58,7 @@ To turn billing on:
    - Make any diagram → 👍 / 👎 → check that a row lands in `command_logs`
    - Click **Share** → toggle public → open the URL in a private window → should render
    - Click **PNG** → file should have the "Made with Directoor" watermark in the bottom-right
-   - (If Stripe is configured) **Upgrade to Pro** → checkout → after returning, the watermark goes away and caps are lifted
+   - (If Polar is configured) **Upgrade to Pro** → checkout → after returning, the watermark goes away and caps are lifted
 
 ## 5. Domain
 

@@ -13,6 +13,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
     "@directoor/core": "workspace:*",
+    "@polar-sh/sdk": "^0.47.0",
     "@supabase/ssr": "^0.6.0",
     "@supabase/supabase-js": "^2.49.0",
     "gifenc": "^1.0.3",
@@ -21,7 +22,6 @@
     "next": "16.2.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "stripe": "^22.0.1",
     "tldraw": "^3.12.0"
   },
   "devDependencies": {

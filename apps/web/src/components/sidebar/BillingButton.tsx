@@ -22,7 +22,7 @@ export function BillingButton({ tier }: BillingButtonProps) {
     setBusy(true);
     setHint("");
     try {
-      const path = tier === "pro" ? "/api/stripe/portal" : "/api/stripe/checkout";
+      const path = tier === "pro" ? "/api/polar/portal" : "/api/polar/checkout";
       const res = await apiFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

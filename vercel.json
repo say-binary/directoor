@@ -9,6 +9,6 @@
     "apps/web/src/app/api/command/route.ts": { "maxDuration": 60 },
     "apps/web/src/app/api/text/route.ts":    { "maxDuration": 30 },
     "apps/web/src/app/api/image-search/route.ts": { "maxDuration": 15 },
-    "apps/web/src/app/api/stripe/webhook/route.ts": { "maxDuration": 15 }
+    "apps/web/src/app/api/polar/webhook/route.ts": { "maxDuration": 15 }
   }
 }
