@@ -24,6 +24,8 @@ import {
   TLBaseShape,
   T,
   Rectangle2d,
+  Polyline2d,
+  Vec,
   Geometry2d,
   useEditor,
   useValue,
@@ -1008,16 +1010,35 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
     return { sx, sy, ex, ey };
   }
 
-  /** Geometry — used for hit-testing and selection bounds. */
+  /**
+   * Geometry is a Polyline along the actual arrow path (NOT a filled
+   * rectangle bounding box). This means hit-testing only activates when
+   * the user clicks ON the line — not anywhere inside the diagonal bbox.
+   * Critical for diagrams where many arrows cross: each arrow is
+   * independently clickable even when their bounding rectangles overlap.
+   */
   override getGeometry(shape: DirectoorArrowShape): Geometry2d {
     const { sx, sy, ex, ey } = this.computeEndpoints(shape);
     const shapeX = Number.isFinite(shape.x) ? shape.x : 0;
     const shapeY = Number.isFinite(shape.y) ? shape.y : 0;
-    const minX = Math.min(sx, ex) - shapeX;
-    const minY = Math.min(sy, ey) - shapeY;
-    const w = Math.max(8, Math.abs(ex - sx));
-    const h = Math.max(8, Math.abs(ey - sy));
-    return new Rectangle2d({ x: minX, y: minY, width: w, height: h, isFilled: true });
+    const path = shape.props.path;
+
+    // Path points in shape-local coordinates
+    const p0 = new Vec(sx - shapeX, sy - shapeY);
+    const p1 = new Vec(ex - shapeX, ey - shapeY);
+
+    if (path === "elbow") {
+      const midX = (p0.x + p1.x) / 2;
+      return new Polyline2d({
+        points: [
+          p0,
+          new Vec(midX, p0.y),
+          new Vec(midX, p1.y),
+          p1,
+        ],
+      });
+    }
+    return new Polyline2d({ points: [p0, p1] });
   }
 
   override component(shape: DirectoorArrowShape) {
@@ -1104,9 +1125,42 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
     return `M ${x} ${y} L ${x + headSize * Math.cos(a1)} ${y + headSize * Math.sin(a1)} L ${x + headSize * Math.cos(a2)} ${y + headSize * Math.sin(a2)} Z`;
   };
 
-  // Label position — middle of path
-  const labelX = (lsx + lex) / 2;
-  const labelY = (lsy + ley) / 2;
+  // ─── Label position & rotation ─────────────────────────
+  // Position the label at the midpoint of the "main" segment and
+  // offset it PERPENDICULAR to the line so the label sits OVER (above)
+  // the arrow, not on top of it.
+  let labelMidX: number;
+  let labelMidY: number;
+  let labelAngleRad: number;
+
+  if (path === "elbow") {
+    // Use the longer of the two horizontal segments as the label anchor
+    const midX = (lsx + lex) / 2;
+    labelMidX = midX;
+    labelMidY = (lsy + ley) / 2;
+    labelAngleRad = 0; // elbow arrows — horizontal label is always fine
+  } else {
+    labelMidX = (lsx + lex) / 2;
+    labelMidY = (lsy + ley) / 2;
+    labelAngleRad = Math.atan2(ley - lsy, lex - lsx);
+  }
+
+  // Perpendicular offset so the label sits ABOVE the line by 14px
+  const perpOffset = 14;
+  // Perpendicular direction: rotate line vector by -90° (up/left in screen coords)
+  const lineLen = Math.hypot(lex - lsx, ley - lsy) || 1;
+  const perpDx = -((ley - lsy) / lineLen);
+  const perpDy = (lex - lsx) / lineLen;
+  // We want the offset to go "up" on screen (negative Y). Flip if needed.
+  const offsetSign = perpDy < 0 ? 1 : -1;
+  const labelX = labelMidX + perpDx * perpOffset * offsetSign;
+  const labelY = labelMidY + perpDy * perpOffset * offsetSign;
+
+  // Keep text readable — if angle is steep enough that text would be upside
+  // down, flip by 180° so it always reads left-to-right.
+  let labelRotDeg = (labelAngleRad * 180) / Math.PI;
+  if (labelRotDeg > 90) labelRotDeg -= 180;
+  if (labelRotDeg < -90) labelRotDeg += 180;
 
   return (
     <HTMLContainer style={{ width: 1, height: 1, pointerEvents: "none", overflow: "visible" }}>
@@ -1121,12 +1175,12 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
           pointerEvents: "none",
         }}
       >
-        {/* Invisible wide hit area for clicking */}
+        {/* Hit path — narrower than before (8px) so adjacent arrows don't overlap click targets */}
         <path
           d={pathD}
           fill="none"
           stroke="transparent"
-          strokeWidth={Math.max(20, strokeWidth + 16)}
+          strokeWidth={Math.max(8, strokeWidth + 4)}
           style={{ pointerEvents: "stroke" }}
         />
         {/* Visible path */}
@@ -1153,6 +1207,7 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
         isEditing={isEditing}
         absX={minX + labelX}
         absY={minY + labelY}
+        rotateDeg={labelRotDeg}
       />
     </HTMLContainer>
   );
@@ -1165,12 +1220,14 @@ function ArrowLabel({
   isEditing,
   absX,
   absY,
+  rotateDeg,
 }: {
   shapeId: string;
   label: string;
   isEditing: boolean;
   absX: number;
   absY: number;
+  rotateDeg: number;
 }) {
   const editor = useEditor();
   const [draft, setDraft] = useState(label);
@@ -1228,7 +1285,8 @@ function ArrowLabel({
           position: "absolute",
           left: absX,
           top: absY,
-          transform: "translate(-50%, -50%)",
+          transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+          transformOrigin: "center center",
           minWidth: 60,
           padding: "2px 8px",
           fontFamily: "Inter, system-ui, sans-serif",
@@ -1260,7 +1318,8 @@ function ArrowLabel({
         position: "absolute",
         left: absX,
         top: absY,
-        transform: "translate(-50%, -50%)",
+        transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
+        transformOrigin: "center center",
         minWidth: 24,
         minHeight: 16,
         padding: label ? "1px 6px" : "0",

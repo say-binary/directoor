@@ -475,14 +475,27 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
     }
 
     // Auto-include arrows/connections that involve any of the selected shapes.
-    // Check every selected shape for arrows bound to/from it.
-    const allShapeIds = new Set(selectedShapeIds);
+    const allShapeIds = new Set<TLShapeId>(selectedShapeIds);
+    const selectedIdSet = new Set(selectedShapeIds as string[]);
 
+    // (1) tldraw native-arrow bindings (back-compat with any legacy arrows)
     for (const shapeId of selectedShapeIds) {
       const bindings = editor.getBindingsInvolvingShape(shapeId, "arrow");
       for (const binding of bindings) {
-        // binding.fromId is the arrow shape, binding.toId is the target shape
-        allShapeIds.add(binding.fromId); // the arrow itself
+        allShapeIds.add(binding.fromId);
+      }
+    }
+
+    // (2) directoor-arrow shapes whose fromShapeId/toShapeId point at a
+    // selected shape — our custom arrows don't use tldraw bindings.
+    const allPageShapes = editor.getCurrentPageShapes();
+    for (const shape of allPageShapes) {
+      if (shape.type !== "directoor-arrow") continue;
+      const props = shape.props as { fromShapeId?: string; toShapeId?: string };
+      const fromHit = props.fromShapeId && selectedIdSet.has(props.fromShapeId);
+      const toHit = props.toShapeId && selectedIdSet.has(props.toShapeId);
+      if (fromHit || toHit) {
+        allShapeIds.add(shape.id);
       }
     }
 

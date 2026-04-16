@@ -140,19 +140,19 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
       if (step < seq.length) {
         timeoutRef.current = setTimeout(tick, 800);
       } else {
-        // All steps done — hold the final frame, then decide
+        // All steps done — hold the final frame so the viewer clearly sees it
         timeoutRef.current = setTimeout(() => {
           if (isLoopingRef.current) {
-            // Reset and restart
+            // Loop: hide all, pause briefly, then restart from step 0
             for (const id of shapeIds) {
               const shape = editor.getShape(id);
               if (shape) editor.updateShape({ id, type: shape.type, opacity: 0 });
             }
             setCurrentStep(0);
             step = 0;
-            timeoutRef.current = setTimeout(tick, 500);
+            timeoutRef.current = setTimeout(tick, 700);
           } else {
-            // Show all and stop
+            // One-shot: keep the full scene visible, stop
             for (const id of shapeIds) {
               const shape = editor.getShape(id);
               if (shape) editor.updateShape({ id, type: shape.type, opacity: 1 });
@@ -160,7 +160,7 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
             setIsPlaying(false);
             setCurrentStep(-1);
           }
-        }, 1500); // Hold final frame 1.5s
+        }, 2200); // Hold final frame 2.2s so the last reveal is clearly visible
       }
     };
 
