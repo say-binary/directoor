@@ -31,7 +31,7 @@ import {
   useValue,
   stopEventPropagation,
 } from "tldraw";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Shared shape props ──────────────────────────────────────────────
 
@@ -1033,37 +1033,33 @@ function DirectoorTextInner({
   const inputRef = useRef<HTMLDivElement | null>(null);
 
   // Obstacles = sibling shapes whose page-bounds intersect ours.
-  // Only meaningful for prose mode; useValue subscribes so obstacles
-  // update live as the user drags shapes around.
-  const obstacles = useValue<Array<{ x: number; y: number; w: number; h: number; side: "left" | "right" }>>(
+  // Stored as shape-local rects so the layout engine can subtract them
+  // from each line's available width.
+  const obstacles = useValue<Array<{ x: number; y: number; w: number; h: number }>>(
     "text-obstacles",
     () => {
       if (contentType !== "prose") return [];
       const selfBounds = editor.getShapePageBounds(shapeId);
       if (!selfBounds) return [];
-      const result: Array<{ x: number; y: number; w: number; h: number; side: "left" | "right" }> = [];
+      const result: Array<{ x: number; y: number; w: number; h: number }> = [];
       const shapes = editor.getCurrentPageShapes();
       for (const s of shapes) {
         if (s.id === shapeId) continue;
         if (s.type === "directoor-arrow") continue;    // arrows don't block flow
+        if (s.type === "directoor-text") continue;     // don't wrap around other text
         const b = editor.getShapePageBounds(s.id);
         if (!b) continue;
-        // Check intersection with our bounds
         const overlapX = Math.max(0, Math.min(b.x + b.w, selfBounds.x + selfBounds.w) - Math.max(b.x, selfBounds.x));
         const overlapY = Math.max(0, Math.min(b.y + b.h, selfBounds.y + selfBounds.h) - Math.max(b.y, selfBounds.y));
         if (overlapX <= 0 || overlapY <= 0) continue;
-        // Convert to shape-local coordinates
-        const lx = b.x - selfBounds.x;
-        const ly = b.y - selfBounds.y;
-        // Decide which side to float on, based on which half of the
-        // text shape the obstacle's center sits in. "left" means the
-        // obstacle occupies the left side and text floats to the right.
-        const obstacleCenterX = lx + b.w / 2;
-        const side: "left" | "right" = obstacleCenterX < w / 2 ? "left" : "right";
-        result.push({ x: lx, y: ly, w: b.w, h: b.h, side });
+        // Shape-local coords — the intersection of the two rects
+        const lx = Math.max(0, b.x - selfBounds.x);
+        const ly = Math.max(0, b.y - selfBounds.y);
+        const lx2 = Math.min(w, b.x + b.w - selfBounds.x);
+        const ly2 = Math.min(h, b.y + b.h - selfBounds.y);
+        result.push({ x: lx, y: ly, w: lx2 - lx, h: ly2 - ly });
       }
-      // Sort obstacles top-to-bottom so CSS floats stack in visual order
-      return result.sort((a, b) => a.y - b.y);
+      return result;
     },
     [editor, shapeId, contentType, w, h],
   );
@@ -1159,51 +1155,76 @@ function DirectoorTextInner({
     );
   }
 
-  // ─── Prose mode (flow container) ─────────────────────────────
-  // Render floated placeholder divs for each obstacle so the text flows
-  // around them. Obstacles are rendered BEFORE the text, with CSS `float`
-  // on the appropriate side and `shape-outside` making the text wrap tight
-  // to the obstacle rectangle.
+  // ─── Prose mode (magazine-style flow container) ──────────────
+  // CSS float/shape-outside can only anchor obstacles to the left or
+  // right of a block — it cannot handle a shape placed in the MIDDLE
+  // of the text. For true magazine wrapping we run a custom line-by-line
+  // layout engine:
+  //
+  //   For each line at y position:
+  //     1. Find obstacles intersecting this line's y-band
+  //     2. Compute "allowed segments" — horizontal gaps between obstacles
+  //     3. Pack words into those segments, left to right, one word at a time
+  //     4. If a segment is exhausted and there's still text, move to next
+  //        segment on same line; if line exhausted, move to next line
+  //
+  // Words are measured via canvas 2D context for accurate widths.
+  // The output is a list of absolutely-positioned <span>s.
   const proseBase: React.CSSProperties = {
     position: "absolute",
     inset: 0,
-    overflow: "auto",
-    padding: "12px 14px",
+    overflow: "hidden",
+    padding: 0,
     fontFamily: "Inter, system-ui, sans-serif",
     fontSize,
     fontWeight: weight === "bold" ? 700 : 400,
     color,
-    lineHeight: 1.5,
     textAlign: align,
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
     ...bgStyle,
   };
 
-  const floatObstacles = obstacles.map((o, idx) => {
-    // Clamp to shape bounds so floats never claim space outside the container
-    const clampedX = Math.max(0, Math.min(o.x, w));
-    const clampedY = Math.max(0, Math.min(o.y, h));
-    const clampedW = Math.max(0, Math.min(o.w, w - clampedX));
-    const clampedH = Math.max(0, Math.min(o.h, h - clampedY));
-    // 10px gutter so text doesn't touch the obstacle
-    const gutter = 10;
-    return (
-      <div
-        key={`obs-${idx}`}
-        style={{
-          float: o.side,
-          width: clampedW + gutter,
-          height: clampedH + gutter,
-          // Push the float down to the obstacle's Y position by leaving
-          // an empty margin at the top of the float.
-          marginTop: clampedY,
-          marginBottom: gutter,
-          shapeOutside: `inset(0 0 0 0)`,
-        }}
-      />
-    );
-  });
+  const PADDING = 14;
+  const GUTTER = 8; // breathing room between obstacle and text
+  const LINE_HEIGHT = Math.round(fontSize * 1.5);
+
+  // Auto-grow: after layout, if content exceeds shape height, request a
+  // resize so the container fits. Done via useEffect to avoid re-render loops.
+  const containerWidth = Math.max(60, w - PADDING * 2);
+  const maxLayoutHeight = h - PADDING * 2;
+
+  const layout = useMemo(() => {
+    if (!text) return { words: [] as LaidOutWord[], totalHeight: 0 };
+    return layoutProse({
+      text,
+      width: containerWidth,
+      fontSize,
+      fontWeight: weight === "bold" ? 700 : 400,
+      fontFamily: "Inter, system-ui, sans-serif",
+      lineHeight: LINE_HEIGHT,
+      obstacles: obstacles.map((o) => ({
+        x: Math.max(0, o.x - PADDING - GUTTER),
+        y: Math.max(0, o.y - PADDING - GUTTER),
+        w: o.w + GUTTER * 2,
+        h: o.h + GUTTER * 2,
+      })),
+    });
+  }, [text, containerWidth, fontSize, weight, LINE_HEIGHT, obstacles]);
+
+  // Auto-grow: if the laid-out text overflows the shape, grow the shape.
+  useEffect(() => {
+    if (contentType !== "prose") return;
+    const neededH = layout.totalHeight + PADDING * 2 + 4;
+    if (neededH > h + 0.5) {
+      const currentShape = editor.getShape(shapeId);
+      if (currentShape) {
+        editor.updateShape({
+          id: currentShape.id,
+          type: currentShape.type,
+          props: { ...(currentShape.props as Record<string, unknown>), h: neededH },
+        });
+      }
+    }
+  }, [layout.totalHeight, h, contentType, editor, shapeId]);
 
   if (isEditing) {
     return (
@@ -1217,12 +1238,15 @@ function DirectoorTextInner({
         onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
         onBlur={commit}
         onKeyDown={(e) => {
-          // Enter inserts a line break (prose can be multi-paragraph)
           if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
           e.stopPropagation();
         }}
         style={{
           ...proseBase,
+          padding: `${PADDING}px`,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          lineHeight: 1.5,
           outline: "2px solid #3b82f6",
           outlineOffset: 1,
           borderRadius: 4,
@@ -1237,12 +1261,190 @@ function DirectoorTextInner({
     );
   }
 
+  if (!text) {
+    return (
+      <div style={{ ...proseBase, padding: PADDING, pointerEvents: "none" }}>
+        <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>
+      </div>
+    );
+  }
+
   return (
     <div style={{ ...proseBase, pointerEvents: "none" }}>
-      {floatObstacles}
-      {text || <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>}
+      <div style={{ position: "absolute", inset: PADDING }}>
+        {layout.words.map((word, i) => (
+          <span
+            key={i}
+            style={{
+              position: "absolute",
+              left: word.x,
+              top: word.y,
+              whiteSpace: "pre",
+            }}
+          >
+            {word.text}
+          </span>
+        ))}
+      </div>
     </div>
   );
+}
+
+// ─── Prose layout engine ─────────────────────────────────────────────
+// Line-by-line text layout that flows around arbitrary rectangular
+// obstacles anywhere inside the container. Measures word widths using
+// a canvas 2D context (accurate to the actual browser font rendering).
+
+interface LaidOutWord {
+  text: string;
+  x: number;
+  y: number;
+}
+
+interface LayoutInput {
+  text: string;
+  width: number;
+  fontSize: number;
+  fontWeight: number;
+  fontFamily: string;
+  lineHeight: number;
+  obstacles: Array<{ x: number; y: number; w: number; h: number }>;
+}
+
+/** Shared canvas for text measurement — reused across calls. */
+let _measureCtx: CanvasRenderingContext2D | null = null;
+function getMeasureCtx(): CanvasRenderingContext2D | null {
+  if (typeof document === "undefined") return null;
+  if (!_measureCtx) {
+    const c = document.createElement("canvas");
+    _measureCtx = c.getContext("2d");
+  }
+  return _measureCtx;
+}
+
+/**
+ * Compute the horizontal "allowed segments" at a given y-band.
+ * Given the container width and obstacle rects intersecting the band,
+ * returns a list of [start, end] ranges where text can flow.
+ */
+function computeAllowedSegments(
+  containerWidth: number,
+  bandY: number,
+  bandHeight: number,
+  obstacles: Array<{ x: number; y: number; w: number; h: number }>,
+): Array<[number, number]> {
+  // Find obstacles intersecting the line's vertical band
+  const blockers = obstacles
+    .filter((o) => o.y < bandY + bandHeight && o.y + o.h > bandY)
+    .map((o) => [Math.max(0, o.x), Math.min(containerWidth, o.x + o.w)] as [number, number])
+    .filter(([s, e]) => e > s);
+  blockers.sort((a, b) => a[0] - b[0]);
+
+  // Merge overlapping blockers
+  const merged: Array<[number, number]> = [];
+  for (const b of blockers) {
+    if (merged.length === 0) { merged.push(b); continue; }
+    const last = merged[merged.length - 1]!;
+    if (b[0] <= last[1]) last[1] = Math.max(last[1], b[1]);
+    else merged.push(b);
+  }
+
+  // Gaps between blockers = allowed segments
+  const allowed: Array<[number, number]> = [];
+  let cursor = 0;
+  for (const [s, e] of merged) {
+    if (s > cursor) allowed.push([cursor, s]);
+    cursor = e;
+  }
+  if (cursor < containerWidth) allowed.push([cursor, containerWidth]);
+
+  // Drop segments too small to fit any word
+  return allowed.filter(([s, e]) => e - s >= 8);
+}
+
+/**
+ * Lay out prose text word-by-word, wrapping around obstacles.
+ * Returns positioned words plus total content height (for auto-grow).
+ */
+function layoutProse(input: LayoutInput): { words: LaidOutWord[]; totalHeight: number } {
+  const { text, width, fontSize, fontWeight, fontFamily, lineHeight, obstacles } = input;
+  const ctx = getMeasureCtx();
+  if (!ctx) {
+    // Server-side render or canvas unavailable — just produce a rough fallback
+    return { words: [], totalHeight: 0 };
+  }
+  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+
+  const spaceWidth = ctx.measureText(" ").width;
+  const words: LaidOutWord[] = [];
+
+  // Split into paragraphs (blank-line separated), each an array of tokens.
+  // Preserve single newlines as explicit breaks.
+  const paragraphs = text.split(/\n\s*\n/).map((p) => p.replace(/\n/g, " ").trim()).filter(Boolean);
+
+  let y = 0;
+  for (let pi = 0; pi < paragraphs.length; pi++) {
+    const tokens = paragraphs[pi]!.split(/\s+/).filter(Boolean);
+    let ti = 0;
+
+    while (ti < tokens.length) {
+      // For this line, compute allowed segments
+      const segments = computeAllowedSegments(width, y, lineHeight, obstacles);
+
+      if (segments.length === 0) {
+        // Entire line blocked — skip down to next available band
+        y += lineHeight;
+        if (y > 10_000) break; // safety
+        continue;
+      }
+
+      let placedThisLine = false;
+      for (const [segStart, segEnd] of segments) {
+        let cursor = segStart;
+        const segRight = segEnd;
+
+        while (ti < tokens.length) {
+          const token = tokens[ti]!;
+          const tokenW = ctx.measureText(token).width;
+
+          // If the token is wider than the entire segment, hard-break it
+          // onto its own line (fallback to whole-width).
+          if (tokenW > segEnd - segStart && cursor === segStart) {
+            // Place it anyway, it will overflow visually but at least won't freeze
+            words.push({ text: token, x: segStart, y });
+            cursor = segStart + tokenW + spaceWidth;
+            ti++;
+            placedThisLine = true;
+            continue;
+          }
+
+          // Normal fit check
+          const needed = tokenW + (cursor > segStart ? spaceWidth : 0);
+          if (cursor + needed > segRight) break; // segment full
+
+          const placeX = cursor + (cursor > segStart ? spaceWidth : 0);
+          words.push({ text: token, x: placeX, y });
+          cursor = placeX + tokenW;
+          ti++;
+          placedThisLine = true;
+        }
+
+        if (ti >= tokens.length) break;
+      }
+
+      // If nothing could be placed on this line (rare — e.g. super-narrow
+      // segments), advance anyway to avoid infinite loop.
+      if (!placedThisLine) ti++;
+
+      y += lineHeight;
+      if (y > 10_000) break; // safety
+    }
+
+    // Paragraph gap — add half a line height between paragraphs
+    if (pi < paragraphs.length - 1) y += Math.round(lineHeight * 0.6);
+  }
+
+  return { words, totalHeight: y };
 }
 
 // ─── Arrow Shape (replaces tldraw native arrow) ─────────────────────
