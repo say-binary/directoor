@@ -210,6 +210,7 @@ export function defaultStyleForSemanticType(semanticType: string): { stroke: str
     layer:     { stroke: '#1D4ED8', fill: '#EFF6FF' },
     arrow:     { stroke: '#334155', fill: '#FFFFFF' },
     line:      { stroke: '#334155', fill: '#FFFFFF' },
+    text:      { stroke: '#0F172A', fill: 'transparent' },
   };
   return palette[icon];
 }

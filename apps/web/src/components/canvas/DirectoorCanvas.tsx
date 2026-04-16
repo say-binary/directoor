@@ -240,9 +240,24 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
         if (data?.canvas_state && typeof data.canvas_state === "object") {
           const saved = data.canvas_state as Record<string, unknown>;
 
-          // Restore tldraw snapshot
+          // Restore tldraw snapshot — migrating any old shape records
+          // whose props are missing new fields added in later schema versions.
           if (saved.tldrawSnapshot) {
             try {
+              const snapshot = saved.tldrawSnapshot as {
+                store: Record<string, { id?: string; typeName?: string; type?: string; props?: Record<string, unknown> }>;
+              };
+              if (snapshot?.store) {
+                for (const [key, rec] of Object.entries(snapshot.store)) {
+                  if (!rec || rec.typeName !== "shape" || !rec.props) continue;
+                  // Migration: directoor-arrow gained labelPosition in a later version
+                  if (rec.type === "directoor-arrow") {
+                    if (rec.props.labelPosition === undefined) rec.props.labelPosition = 0.5;
+                    if (rec.props.label === undefined) rec.props.label = "";
+                  }
+                  snapshot.store[key] = rec;
+                }
+              }
               editor.store.loadStoreSnapshot(saved.tldrawSnapshot as any);
             } catch (e) {
               console.warn("Could not restore canvas snapshot, starting fresh:", e);
@@ -419,6 +434,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
           layer:     { w: 90,  h: 160, stroke: "#1D4ED8", fill: "#EFF6FF", name: "Layer" },
           arrow:     { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Arrow" },
           line:      { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Line" },
+          text:      { w: 140, h: 32,  stroke: "#0F172A", fill: "transparent", name: "Text" },
         };
         const d = defaults[archetype];
         if (!d) return;

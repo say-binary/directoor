@@ -134,7 +134,8 @@ export type IconShape =
   | 'pill'        // Endpoints, ports, API routes, tags
   | 'layer'       // ML model layers, stack layers with stripes
   | 'arrow'       // Connection/edge with arrowhead(s)
-  | 'line';       // Plain connection/edge (no arrowheads)
+  | 'line'        // Plain connection/edge (no arrowheads)
+  | 'text';       // Standalone text — movable, rotatable, editable
 
 /** Arrow/connection types */
 export type ConnectionType = 'arrow' | 'line';

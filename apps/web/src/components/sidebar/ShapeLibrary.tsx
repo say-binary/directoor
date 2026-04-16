@@ -120,6 +120,13 @@ const ARCHETYPES: Archetype[] = [
     defaultWidth: 200, defaultHeight: 0,
     defaultStroke: "#334155", defaultFill: "#FFFFFF",
   },
+  {
+    iconShape: "text",
+    displayName: "Text",
+    exampleUses: ["label", "annotation", "caption", "title", "note"],
+    defaultWidth: 140, defaultHeight: 32,
+    defaultStroke: "#0F172A", defaultFill: "transparent",
+  },
 ];
 
 /** Convert plain text to tldraw's richText format */
@@ -346,6 +353,22 @@ function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
           <line x1={4} y1={h / 2} x2={w - 4} y2={h / 2} stroke={color} strokeWidth={2} strokeLinecap="round" />
         </svg>
       );
+    case "text":
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <text
+            x={w / 2}
+            y={h / 2 + 5}
+            fontFamily="Inter, system-ui, sans-serif"
+            fontSize={16}
+            fontWeight={700}
+            textAnchor="middle"
+            fill={color}
+          >
+            T
+          </text>
+        </svg>
+      );
     case "rectangle":
     default:
       return (
@@ -395,6 +418,31 @@ export function createArchetypeShape(
     });
     // Arrows/lines don't get auto-edit (empty label by default)
     setTimeout(() => editor.select(tlId), 50);
+    return tlId;
+  }
+
+  if (archetype.iconShape === "text") {
+    // Text is its own shape type with different props
+    editor.createShape({
+      id: tlId,
+      type: "directoor-text",
+      x: position.x,
+      y: position.y,
+      props: {
+        w: archetype.defaultWidth,
+        h: archetype.defaultHeight,
+        text: "",
+        color: archetype.defaultStroke,
+        size: "m",
+        weight: "normal",
+        align: "center",
+        background: "none",
+      },
+    });
+    setTimeout(() => {
+      editor.select(tlId);
+      editor.setEditingShape(tlId);
+    }, 50);
     return tlId;
   }
 

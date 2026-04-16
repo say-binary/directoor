@@ -882,6 +882,222 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
   }
 }
 
+// ─── Text Shape (standalone, movable, editable, rotatable) ──────────
+// Decoupled text — a standalone shape that can be placed anywhere,
+// moved, resized, rotated, and edited independently of other shapes.
+// Used as the label for arrows/lines (bridge creates one alongside the
+// connection when the LLM provides a label). Also available as an
+// archetype in the sidebar library for manual placement.
+
+interface DirectoorTextProps {
+  w: number;
+  h: number;
+  text: string;
+  /** Text color as hex */
+  color: string;
+  /** Text size preset */
+  size: "xs" | "s" | "m" | "l" | "xl";
+  /** Font weight */
+  weight: "normal" | "bold";
+  /** Text alignment */
+  align: "left" | "center" | "right";
+  /** Optional background (for labels over busy lines) */
+  background: "none" | "subtle" | "solid";
+}
+
+const textProps: RecordProps<TLBaseShape<"directoor-text", DirectoorTextProps>> = {
+  w: T.number,
+  h: T.number,
+  text: T.string,
+  color: T.string,
+  size: T.literalEnum("xs", "s", "m", "l", "xl"),
+  weight: T.literalEnum("normal", "bold"),
+  align: T.literalEnum("left", "center", "right"),
+  background: T.literalEnum("none", "subtle", "solid"),
+};
+
+const textDefaults: DirectoorTextProps = {
+  w: 120, h: 28,
+  text: "Text",
+  color: "#0F172A",
+  size: "m",
+  weight: "normal",
+  align: "center",
+  background: "none",
+};
+
+const TEXT_SIZE_MAP: Record<DirectoorTextProps["size"], number> = {
+  xs: 10, s: 12, m: 14, l: 18, xl: 24,
+};
+
+export type DirectoorTextShape = TLBaseShape<"directoor-text", DirectoorTextProps>;
+
+export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape> {
+  static override type = "directoor-text" as const;
+  static override props = textProps as RecordProps<DirectoorTextShape>;
+
+  override canEdit(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorTextProps {
+    return textDefaults;
+  }
+
+  override getGeometry(shape: DirectoorTextShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorTextShape) {
+    const { w, h, text, color, size, weight, align, background } = shape.props;
+    const fontSize = TEXT_SIZE_MAP[size];
+
+    const bgStyles: Record<DirectoorTextProps["background"], React.CSSProperties> = {
+      none: { background: "transparent" },
+      subtle: { background: "rgba(255,255,255,0.88)", borderRadius: 4 },
+      solid: { background: "#FFFFFF", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)" },
+    };
+
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <DirectoorTextInner
+          shapeId={shape.id}
+          text={text}
+          w={w}
+          h={h}
+          fontSize={fontSize}
+          weight={weight}
+          align={align}
+          color={color}
+          bgStyle={bgStyles[background]}
+        />
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorTextShape) {
+    return <rect width={shape.props.w} height={shape.props.h} rx={4} />;
+  }
+}
+
+/** Inner text body — separated so hooks (useEditor/useValue) can subscribe. */
+function DirectoorTextInner({
+  shapeId,
+  text,
+  w,
+  h,
+  fontSize,
+  weight,
+  align,
+  color,
+  bgStyle,
+}: {
+  shapeId: string;
+  text: string;
+  w: number;
+  h: number;
+  fontSize: number;
+  weight: "normal" | "bold";
+  align: "left" | "center" | "right";
+  color: string;
+  bgStyle: React.CSSProperties;
+}) {
+  const editor = useEditor();
+  const isEditing = useValue(
+    "text-isEditing",
+    () => editor.getEditingShapeId() === (shapeId as never),
+    [editor, shapeId],
+  );
+  const [draft, setDraft] = useState(text);
+  const inputRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      setDraft(text);
+      const t = setTimeout(() => {
+        const el = inputRef.current;
+        if (el) {
+          el.focus();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      }, 0);
+      return () => clearTimeout(t);
+    }
+  }, [isEditing, text]);
+
+  const commit = () => {
+    const shape = editor.getShape(shapeId as never);
+    if (!shape) return;
+    const trimmed = draft.trim();
+    if (trimmed !== text) {
+      editor.updateShape({
+        id: shape.id,
+        type: shape.type,
+        props: { ...(shape.props as Record<string, unknown>), text: trimmed },
+      });
+    }
+    editor.setEditingShape(null);
+  };
+
+  const baseStyle: React.CSSProperties = {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center",
+    padding: "2px 6px",
+    fontFamily: "Inter, system-ui, sans-serif",
+    fontSize,
+    fontWeight: weight === "bold" ? 700 : 500,
+    color,
+    lineHeight: 1.2,
+    textAlign: align,
+    ...bgStyle,
+  };
+
+  if (isEditing) {
+    return (
+      <div
+        ref={inputRef}
+        contentEditable
+        suppressContentEditableWarning
+        onPointerDown={stopEventPropagation}
+        onMouseDown={stopEventPropagation}
+        onClick={stopEventPropagation}
+        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
+          else if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
+          e.stopPropagation();
+        }}
+        style={{
+          ...baseStyle,
+          outline: "2px solid #3b82f6",
+          outlineOffset: 1,
+          borderRadius: 4,
+          background: "rgba(255,255,255,0.98)",
+          pointerEvents: "all",
+          userSelect: "text",
+          cursor: "text",
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+        }}
+      >
+        {text}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...baseStyle, pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {text || <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>}
+    </div>
+  );
+}
+
 // ─── Arrow Shape (replaces tldraw native arrow) ─────────────────────
 // Properly extends ShapeUtil (NOT BaseBoxShapeUtil — arrows aren't boxes).
 // Stores absolute page-coordinate endpoints + optional shape-id bindings.
@@ -1066,8 +1282,7 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
  * when either endpoint shape moves.
  */
 function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUtil; shape: DirectoorArrowShape }) {
-  const editor = useEditor();
-  const { color, strokeWidth, dash, startHead, endHead, path, label } = shape.props;
+  const { color, strokeWidth, dash, startHead, endHead, path } = shape.props;
   const dashArray = strokeDashArray(dash);
 
   // useValue subscribes to ALL relevant atoms (shape props + bound shape positions),
@@ -1076,12 +1291,6 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
     "arrow-endpoints",
     () => util.computeEndpoints(shape),
     [util, shape],
-  );
-
-  const isEditing = useValue(
-    "isEditing",
-    () => editor.getEditingShapeId() === shape.id,
-    [editor, shape.id],
   );
 
   // Convert to shape-local coordinates
@@ -1129,90 +1338,11 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
     return `M ${x} ${y} L ${x + headSize * Math.cos(a1)} ${y + headSize * Math.sin(a1)} L ${x + headSize * Math.cos(a2)} ${y + headSize * Math.sin(a2)} Z`;
   };
 
-  // ─── Label position & rotation ─────────────────────────
-  // labelPosition (0..1) controls where along the path the label sits.
-  // 0 = at start, 0.5 = middle (default), 1 = at end.
-  // For elbow paths, we walk along the 3-segment L-shape by length.
-  // The label is then offset perpendicular to the path tangent at that
-  // point so it floats OVER the line instead of ON it.
-  const t = Math.max(0, Math.min(1, Number.isFinite(shape.props.labelPosition) ? shape.props.labelPosition : 0.5));
-
-  // Build path segments
-  type Seg = { x1: number; y1: number; x2: number; y2: number; len: number };
-  const segs: Seg[] = [];
-  if (path === "elbow") {
-    const midX = (lsx + lex) / 2;
-    const s1Len = Math.abs(midX - lsx);
-    const s2Len = Math.abs(ley - lsy);
-    const s3Len = Math.abs(lex - midX);
-    segs.push({ x1: lsx, y1: lsy, x2: midX, y2: lsy, len: s1Len });
-    segs.push({ x1: midX, y1: lsy, x2: midX, y2: ley, len: s2Len });
-    segs.push({ x1: midX, y1: ley, x2: lex, y2: ley, len: s3Len });
-  } else {
-    segs.push({ x1: lsx, y1: lsy, x2: lex, y2: ley, len: Math.hypot(lex - lsx, ley - lsy) });
-  }
-
-  const totalLen = segs.reduce((acc, s) => acc + s.len, 0) || 1;
-  let targetDist = t * totalLen;
-  let labelMidX = segs[0]!.x1;
-  let labelMidY = segs[0]!.y1;
-  let labelAngleRad = 0;
-  for (const s of segs) {
-    if (targetDist <= s.len || s === segs[segs.length - 1]) {
-      const segT = s.len > 0 ? targetDist / s.len : 0;
-      labelMidX = s.x1 + (s.x2 - s.x1) * segT;
-      labelMidY = s.y1 + (s.y2 - s.y1) * segT;
-      labelAngleRad = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
-      break;
-    }
-    targetDist -= s.len;
-  }
-
-  // Perpendicular offset so the label floats above the line by 14px
-  const perpOffset = 14;
-  const perpLen = Math.hypot(Math.cos(labelAngleRad), Math.sin(labelAngleRad)) || 1;
-  const perpDx = -Math.sin(labelAngleRad) / perpLen;
-  const perpDy = Math.cos(labelAngleRad) / perpLen;
-  // Always flip so the label sits "above" in screen-up direction
-  const offsetSign = perpDy < 0 ? 1 : -1;
-  const labelX = labelMidX + perpDx * perpOffset * offsetSign;
-  const labelY = labelMidY + perpDy * perpOffset * offsetSign;
-
-  // Keep text readable — flip by 180° if upside-down
-  let labelRotDeg = (labelAngleRad * 180) / Math.PI;
-  if (labelRotDeg > 90) labelRotDeg -= 180;
-  if (labelRotDeg < -90) labelRotDeg += 180;
-
-  // Closure to compute the nearest `t` along the path for a given page point.
-  // Used by the draggable-label handler.
-  const nearestTForPoint = (pagePx: number, pagePy: number): number => {
-    // Convert page coords → shape-local coords
-    const localX = pagePx - shape.x;
-    const localY = pagePy - shape.y;
-    let bestT = t;
-    let bestDist = Infinity;
-    let accumLen = 0;
-    for (const s of segs) {
-      // Project (localX, localY) onto segment (x1,y1)-(x2,y2)
-      const dx = s.x2 - s.x1;
-      const dy = s.y2 - s.y1;
-      const segLen2 = dx * dx + dy * dy;
-      let st = 0;
-      if (segLen2 > 0) {
-        st = ((localX - s.x1) * dx + (localY - s.y1) * dy) / segLen2;
-        st = Math.max(0, Math.min(1, st));
-      }
-      const px = s.x1 + dx * st;
-      const py = s.y1 + dy * st;
-      const d = Math.hypot(px - localX, py - localY);
-      if (d < bestDist) {
-        bestDist = d;
-        bestT = (accumLen + st * s.len) / totalLen;
-      }
-      accumLen += s.len;
-    }
-    return Math.max(0, Math.min(1, bestT));
-  };
+  // Labels are now decoupled — text is a separate directoor-text shape.
+  // Arrows no longer render any embedded label. If the bridge/LLM created
+  // a connection with a label, it also created a companion text shape
+  // positioned at the arrow's midpoint. The user can move, rotate, edit,
+  // or delete that text shape independently of the arrow.
 
   return (
     <HTMLContainer style={{ width: 1, height: 1, pointerEvents: "none", overflow: "visible" }}>
@@ -1253,199 +1383,7 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
           <path d={headPath(lsx, lsy, angleStart)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />
         )}
       </svg>
-      <ArrowLabel
-        shapeId={shape.id}
-        label={label}
-        isEditing={isEditing}
-        absX={minX + labelX}
-        absY={minY + labelY}
-        rotateDeg={labelRotDeg}
-        onDragToT={(pagePx, pagePy) => {
-          const newT = nearestTForPoint(pagePx, pagePy);
-          const s = editor.getShape(shape.id);
-          if (!s) return;
-          editor.updateShape({
-            id: s.id,
-            type: s.type,
-            props: { ...(s.props as Record<string, unknown>), labelPosition: newT },
-          });
-        }}
-      />
     </HTMLContainer>
-  );
-}
-
-/** Editable + draggable label that floats above the arrow path */
-function ArrowLabel({
-  shapeId,
-  label,
-  isEditing,
-  absX,
-  absY,
-  rotateDeg,
-  onDragToT,
-}: {
-  shapeId: string;
-  label: string;
-  isEditing: boolean;
-  absX: number;
-  absY: number;
-  rotateDeg: number;
-  /** Called continuously while the user drags the label along the path. */
-  onDragToT: (pageX: number, pageY: number) => void;
-}) {
-  const editor = useEditor();
-  const [draft, setDraft] = useState(label);
-  const inputRef = useRef<HTMLDivElement | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-
-  // Drag: slide the label along the arrow path
-  const handlePointerDown = (e: React.PointerEvent) => {
-    if (isEditing) return; // don't drag while editing text
-    // Only initiate drag on a primary-button pointer down on the label
-    if (e.button !== 0) return;
-    e.stopPropagation();
-    e.preventDefault();
-    setIsDragging(true);
-    const target = e.target as HTMLElement;
-    target.setPointerCapture?.(e.pointerId);
-
-    const handleMove = (moveE: PointerEvent) => {
-      const page = editor.screenToPage({ x: moveE.clientX, y: moveE.clientY });
-      onDragToT(page.x, page.y);
-    };
-
-    const handleUp = () => {
-      setIsDragging(false);
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-      window.removeEventListener("pointercancel", handleUp);
-    };
-
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    window.addEventListener("pointercancel", handleUp);
-  };
-
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(label);
-      const t = setTimeout(() => {
-        const el = inputRef.current;
-        if (el) {
-          el.focus();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          const sel = window.getSelection();
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-        }
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [isEditing, label]);
-
-  const commit = () => {
-    const shape = editor.getShape(shapeId as never);
-    if (!shape) return;
-    const trimmed = draft.trim();
-    if (trimmed !== label) {
-      editor.updateShape({
-        id: shape.id,
-        type: shape.type,
-        props: { ...(shape.props as Record<string, unknown>), label: trimmed },
-      });
-    }
-    editor.setEditingShape(null);
-  };
-
-  if (isEditing) {
-    return (
-      <div
-        ref={inputRef}
-        contentEditable
-        suppressContentEditableWarning
-        onPointerDown={stopEventPropagation}
-        onMouseDown={stopEventPropagation}
-        onClick={stopEventPropagation}
-        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
-          else if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
-          e.stopPropagation();
-        }}
-        style={{
-          position: "absolute",
-          left: absX,
-          top: absY,
-          transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
-          transformOrigin: "center center",
-          minWidth: 60,
-          padding: "2px 8px",
-          fontFamily: "Inter, system-ui, sans-serif",
-          fontSize: 12,
-          fontWeight: 600,
-          color: "#0f172a",
-          background: "rgba(255,255,255,0.98)",
-          outline: "2px solid #3b82f6",
-          outlineOffset: 1,
-          borderRadius: 4,
-          textAlign: "center",
-          whiteSpace: "nowrap",
-          pointerEvents: "all",
-          userSelect: "text",
-          cursor: "text",
-          zIndex: 10,
-        }}
-      >
-        {label}
-      </div>
-    );
-  }
-
-  // Always render a label container — even empty arrows need a drag/click
-  // target so users can (a) double-click to add a label, (b) drag the
-  // label to slide it along the path.
-  const hasLabel = !!label;
-  return (
-    <div
-      onPointerDown={handlePointerDown}
-      onDoubleClick={(e) => {
-        // Let tldraw handle double-click for edit mode
-        e.stopPropagation();
-        editor.setEditingShape(shapeId as never);
-      }}
-      title="Drag to reposition along line · Double-click to edit"
-      style={{
-        position: "absolute",
-        left: absX,
-        top: absY,
-        transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
-        transformOrigin: "center center",
-        minWidth: hasLabel ? 24 : 16,
-        minHeight: 16,
-        padding: hasLabel ? "1px 6px" : "0 4px",
-        fontFamily: "Inter, system-ui, sans-serif",
-        fontSize: 12,
-        fontWeight: 600,
-        color: "#0f172a",
-        // Give empty labels a subtle dashed placeholder box so users know
-        // the label is there and draggable.
-        background: hasLabel
-          ? "rgba(255,255,255,0.92)"
-          : isDragging ? "rgba(59,130,246,0.1)" : "transparent",
-        border: !hasLabel && !isDragging ? "1px dashed rgba(148,163,184,0.4)" : "none",
-        borderRadius: 4,
-        pointerEvents: "all",
-        cursor: isDragging ? "grabbing" : "grab",
-        whiteSpace: "nowrap",
-        userSelect: "none",
-        zIndex: 5,
-      }}
-    >
-      {hasLabel ? label : <span style={{ opacity: 0.5, fontSize: 10 }}>⠂⠂</span>}
-    </div>
   );
 }
 
@@ -1463,6 +1401,7 @@ export const DIRECTOOR_SHAPE_UTILS = [
   DirectoorDiamondShapeUtil,
   DirectoorPillShapeUtil,
   DirectoorLayerShapeUtil,
+  DirectoorTextShapeUtil,
   DirectoorArrowShapeUtil,
 ];
 
@@ -1483,6 +1422,8 @@ export function iconShapeToTldrawType(iconShape: string): string {
     case "pill":     return "directoor-pill";
     case "layer":    return "directoor-layer";
     case "arrow":    return "directoor-arrow";
+    case "line":     return "directoor-arrow"; // line = arrow with no heads
+    case "text":     return "directoor-text";
     case "rectangle":
     default:         return "directoor-rectangle";
   }

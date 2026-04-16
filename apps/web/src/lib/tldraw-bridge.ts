@@ -253,6 +253,40 @@ function executeAction(
           labelPosition: 0.5,
         },
       });
+
+      // If the connection has a non-empty label, also create a standalone
+      // directoor-text shape positioned at the arrow's midpoint. This text
+      // is a separate shape that the user can move, rotate, resize, and
+      // edit independently of the arrow itself.
+      if (conn.label && conn.label.trim()) {
+        const midX = (startX + endX) / 2;
+        const midY = (startY + endY) / 2;
+        // Perpendicular offset to float above the line by ~18px
+        const dx = endX - startX;
+        const dy = endY - startY;
+        const len = Math.hypot(dx, dy) || 1;
+        const perpSign = dy < 0 || (dy === 0 && dx !== 0) ? 1 : -1;
+        const labelOffsetX = (-dy / len) * 18 * perpSign;
+        const labelOffsetY = (dx / len) * 18 * perpSign;
+        const textW = Math.max(80, conn.label.length * 7 + 16);
+        const textH = 26;
+        editor.createShape({
+          id: createShapeId(),
+          type: "directoor-text",
+          x: midX + labelOffsetX - textW / 2,
+          y: midY + labelOffsetY - textH / 2,
+          props: {
+            w: textW,
+            h: textH,
+            text: conn.label,
+            color: "#0F172A",
+            size: "m",
+            weight: "normal",
+            align: "center",
+            background: "subtle",
+          },
+        });
+      }
       break;
     }
 
