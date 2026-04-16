@@ -209,6 +209,7 @@ export function defaultStyleForSemanticType(semanticType: string): { stroke: str
     pill:      { stroke: '#7C3AED', fill: '#F5F3FF' },
     layer:     { stroke: '#1D4ED8', fill: '#EFF6FF' },
     arrow:     { stroke: '#334155', fill: '#FFFFFF' },
+    line:      { stroke: '#334155', fill: '#FFFFFF' },
   };
   return palette[icon];
 }

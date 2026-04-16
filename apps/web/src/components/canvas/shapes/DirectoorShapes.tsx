@@ -906,6 +906,8 @@ interface DirectoorArrowProps {
   endHead: "none" | "arrow";
   path: "straight" | "elbow";
   label: string;
+  /** 0..1 position along the path where the label sits. 0 = start, 1 = end. */
+  labelPosition: number;
 }
 
 const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps>> = {
@@ -924,6 +926,7 @@ const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps
   endHead: T.literalEnum("none", "arrow"),
   path: T.literalEnum("straight", "elbow"),
   label: T.string,
+  labelPosition: T.number,
 };
 
 const arrowDefaults: DirectoorArrowProps = {
@@ -937,6 +940,7 @@ const arrowDefaults: DirectoorArrowProps = {
   endHead: "arrow",
   path: "elbow",
   label: "",
+  labelPosition: 0.5,
 };
 
 export type DirectoorArrowShape = TLBaseShape<"directoor-arrow", DirectoorArrowProps>;
@@ -1126,41 +1130,89 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
   };
 
   // ─── Label position & rotation ─────────────────────────
-  // Position the label at the midpoint of the "main" segment and
-  // offset it PERPENDICULAR to the line so the label sits OVER (above)
-  // the arrow, not on top of it.
-  let labelMidX: number;
-  let labelMidY: number;
-  let labelAngleRad: number;
+  // labelPosition (0..1) controls where along the path the label sits.
+  // 0 = at start, 0.5 = middle (default), 1 = at end.
+  // For elbow paths, we walk along the 3-segment L-shape by length.
+  // The label is then offset perpendicular to the path tangent at that
+  // point so it floats OVER the line instead of ON it.
+  const t = Math.max(0, Math.min(1, Number.isFinite(shape.props.labelPosition) ? shape.props.labelPosition : 0.5));
 
+  // Build path segments
+  type Seg = { x1: number; y1: number; x2: number; y2: number; len: number };
+  const segs: Seg[] = [];
   if (path === "elbow") {
-    // Use the longer of the two horizontal segments as the label anchor
     const midX = (lsx + lex) / 2;
-    labelMidX = midX;
-    labelMidY = (lsy + ley) / 2;
-    labelAngleRad = 0; // elbow arrows — horizontal label is always fine
+    const s1Len = Math.abs(midX - lsx);
+    const s2Len = Math.abs(ley - lsy);
+    const s3Len = Math.abs(lex - midX);
+    segs.push({ x1: lsx, y1: lsy, x2: midX, y2: lsy, len: s1Len });
+    segs.push({ x1: midX, y1: lsy, x2: midX, y2: ley, len: s2Len });
+    segs.push({ x1: midX, y1: ley, x2: lex, y2: ley, len: s3Len });
   } else {
-    labelMidX = (lsx + lex) / 2;
-    labelMidY = (lsy + ley) / 2;
-    labelAngleRad = Math.atan2(ley - lsy, lex - lsx);
+    segs.push({ x1: lsx, y1: lsy, x2: lex, y2: ley, len: Math.hypot(lex - lsx, ley - lsy) });
   }
 
-  // Perpendicular offset so the label sits ABOVE the line by 14px
+  const totalLen = segs.reduce((acc, s) => acc + s.len, 0) || 1;
+  let targetDist = t * totalLen;
+  let labelMidX = segs[0]!.x1;
+  let labelMidY = segs[0]!.y1;
+  let labelAngleRad = 0;
+  for (const s of segs) {
+    if (targetDist <= s.len || s === segs[segs.length - 1]) {
+      const segT = s.len > 0 ? targetDist / s.len : 0;
+      labelMidX = s.x1 + (s.x2 - s.x1) * segT;
+      labelMidY = s.y1 + (s.y2 - s.y1) * segT;
+      labelAngleRad = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+      break;
+    }
+    targetDist -= s.len;
+  }
+
+  // Perpendicular offset so the label floats above the line by 14px
   const perpOffset = 14;
-  // Perpendicular direction: rotate line vector by -90° (up/left in screen coords)
-  const lineLen = Math.hypot(lex - lsx, ley - lsy) || 1;
-  const perpDx = -((ley - lsy) / lineLen);
-  const perpDy = (lex - lsx) / lineLen;
-  // We want the offset to go "up" on screen (negative Y). Flip if needed.
+  const perpLen = Math.hypot(Math.cos(labelAngleRad), Math.sin(labelAngleRad)) || 1;
+  const perpDx = -Math.sin(labelAngleRad) / perpLen;
+  const perpDy = Math.cos(labelAngleRad) / perpLen;
+  // Always flip so the label sits "above" in screen-up direction
   const offsetSign = perpDy < 0 ? 1 : -1;
   const labelX = labelMidX + perpDx * perpOffset * offsetSign;
   const labelY = labelMidY + perpDy * perpOffset * offsetSign;
 
-  // Keep text readable — if angle is steep enough that text would be upside
-  // down, flip by 180° so it always reads left-to-right.
+  // Keep text readable — flip by 180° if upside-down
   let labelRotDeg = (labelAngleRad * 180) / Math.PI;
   if (labelRotDeg > 90) labelRotDeg -= 180;
   if (labelRotDeg < -90) labelRotDeg += 180;
+
+  // Closure to compute the nearest `t` along the path for a given page point.
+  // Used by the draggable-label handler.
+  const nearestTForPoint = (pagePx: number, pagePy: number): number => {
+    // Convert page coords → shape-local coords
+    const localX = pagePx - shape.x;
+    const localY = pagePy - shape.y;
+    let bestT = t;
+    let bestDist = Infinity;
+    let accumLen = 0;
+    for (const s of segs) {
+      // Project (localX, localY) onto segment (x1,y1)-(x2,y2)
+      const dx = s.x2 - s.x1;
+      const dy = s.y2 - s.y1;
+      const segLen2 = dx * dx + dy * dy;
+      let st = 0;
+      if (segLen2 > 0) {
+        st = ((localX - s.x1) * dx + (localY - s.y1) * dy) / segLen2;
+        st = Math.max(0, Math.min(1, st));
+      }
+      const px = s.x1 + dx * st;
+      const py = s.y1 + dy * st;
+      const d = Math.hypot(px - localX, py - localY);
+      if (d < bestDist) {
+        bestDist = d;
+        bestT = (accumLen + st * s.len) / totalLen;
+      }
+      accumLen += s.len;
+    }
+    return Math.max(0, Math.min(1, bestT));
+  };
 
   return (
     <HTMLContainer style={{ width: 1, height: 1, pointerEvents: "none", overflow: "visible" }}>
@@ -1208,12 +1260,22 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
         absX={minX + labelX}
         absY={minY + labelY}
         rotateDeg={labelRotDeg}
+        onDragToT={(pagePx, pagePy) => {
+          const newT = nearestTForPoint(pagePx, pagePy);
+          const s = editor.getShape(shape.id);
+          if (!s) return;
+          editor.updateShape({
+            id: s.id,
+            type: s.type,
+            props: { ...(s.props as Record<string, unknown>), labelPosition: newT },
+          });
+        }}
       />
     </HTMLContainer>
   );
 }
 
-/** Editable label that floats over the middle of the arrow path */
+/** Editable + draggable label that floats above the arrow path */
 function ArrowLabel({
   shapeId,
   label,
@@ -1221,6 +1283,7 @@ function ArrowLabel({
   absX,
   absY,
   rotateDeg,
+  onDragToT,
 }: {
   shapeId: string;
   label: string;
@@ -1228,10 +1291,41 @@ function ArrowLabel({
   absX: number;
   absY: number;
   rotateDeg: number;
+  /** Called continuously while the user drags the label along the path. */
+  onDragToT: (pageX: number, pageY: number) => void;
 }) {
   const editor = useEditor();
   const [draft, setDraft] = useState(label);
   const inputRef = useRef<HTMLDivElement | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Drag: slide the label along the arrow path
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (isEditing) return; // don't drag while editing text
+    // Only initiate drag on a primary-button pointer down on the label
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    setIsDragging(true);
+    const target = e.target as HTMLElement;
+    target.setPointerCapture?.(e.pointerId);
+
+    const handleMove = (moveE: PointerEvent) => {
+      const page = editor.screenToPage({ x: moveE.clientX, y: moveE.clientY });
+      onDragToT(page.x, page.y);
+    };
+
+    const handleUp = () => {
+      setIsDragging(false);
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      window.removeEventListener("pointercancel", handleUp);
+    };
+
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    window.addEventListener("pointercancel", handleUp);
+  };
 
   useEffect(() => {
     if (isEditing) {
@@ -1310,30 +1404,47 @@ function ArrowLabel({
     );
   }
 
-  // Always render a label container — empty arrows still need a click target
-  // so users can double-click to add a label.
+  // Always render a label container — even empty arrows need a drag/click
+  // target so users can (a) double-click to add a label, (b) drag the
+  // label to slide it along the path.
+  const hasLabel = !!label;
   return (
     <div
+      onPointerDown={handlePointerDown}
+      onDoubleClick={(e) => {
+        // Let tldraw handle double-click for edit mode
+        e.stopPropagation();
+        editor.setEditingShape(shapeId as never);
+      }}
+      title="Drag to reposition along line · Double-click to edit"
       style={{
         position: "absolute",
         left: absX,
         top: absY,
         transform: `translate(-50%, -50%) rotate(${rotateDeg}deg)`,
         transformOrigin: "center center",
-        minWidth: 24,
+        minWidth: hasLabel ? 24 : 16,
         minHeight: 16,
-        padding: label ? "1px 6px" : "0",
+        padding: hasLabel ? "1px 6px" : "0 4px",
         fontFamily: "Inter, system-ui, sans-serif",
         fontSize: 12,
         fontWeight: 600,
         color: "#0f172a",
-        background: label ? "rgba(255,255,255,0.92)" : "transparent",
+        // Give empty labels a subtle dashed placeholder box so users know
+        // the label is there and draggable.
+        background: hasLabel
+          ? "rgba(255,255,255,0.92)"
+          : isDragging ? "rgba(59,130,246,0.1)" : "transparent",
+        border: !hasLabel && !isDragging ? "1px dashed rgba(148,163,184,0.4)" : "none",
         borderRadius: 4,
-        pointerEvents: "none",
+        pointerEvents: "all",
+        cursor: isDragging ? "grabbing" : "grab",
         whiteSpace: "nowrap",
+        userSelect: "none",
+        zIndex: 5,
       }}
     >
-      {label}
+      {hasLabel ? label : <span style={{ opacity: 0.5, fontSize: 10 }}>⠂⠂</span>}
     </div>
   );
 }

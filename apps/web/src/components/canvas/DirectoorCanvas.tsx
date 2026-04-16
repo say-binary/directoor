@@ -418,6 +418,7 @@ export function DirectoorCanvas({ canvasId, userId, onSaveReady, onEditorReady }
           pill:      { w: 130, h: 50,  stroke: "#7C3AED", fill: "#F5F3FF", name: "Endpoint" },
           layer:     { w: 90,  h: 160, stroke: "#1D4ED8", fill: "#EFF6FF", name: "Layer" },
           arrow:     { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Arrow" },
+          line:      { w: 200, h: 0,   stroke: "#334155", fill: "#FFFFFF", name: "Line" },
         };
         const d = defaults[archetype];
         if (!d) return;

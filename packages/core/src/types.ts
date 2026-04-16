@@ -133,7 +133,8 @@ export type IconShape =
   | 'diamond'     // Decisions, conditions, branches
   | 'pill'        // Endpoints, ports, API routes, tags
   | 'layer'       // ML model layers, stack layers with stripes
-  | 'arrow';      // Connection/edge — NOT a node, used for CREATE_CONNECTION
+  | 'arrow'       // Connection/edge with arrowhead(s)
+  | 'line';       // Plain connection/edge (no arrowheads)
 
 /** Arrow/connection types */
 export type ConnectionType = 'arrow' | 'line';

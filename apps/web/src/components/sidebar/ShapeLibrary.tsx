@@ -113,6 +113,13 @@ const ARCHETYPES: Archetype[] = [
     defaultWidth: 200, defaultHeight: 0,
     defaultStroke: "#334155", defaultFill: "#FFFFFF",
   },
+  {
+    iconShape: "line",
+    displayName: "Line",
+    exampleUses: ["plain line", "separator", "divider", "undirected"],
+    defaultWidth: 200, defaultHeight: 0,
+    defaultStroke: "#334155", defaultFill: "#FFFFFF",
+  },
 ];
 
 /** Convert plain text to tldraw's richText format */
@@ -333,6 +340,12 @@ function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
           />
         </svg>
       );
+    case "line":
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <line x1={4} y1={h / 2} x2={w - 4} y2={h / 2} stroke={color} strokeWidth={2} strokeLinecap="round" />
+        </svg>
+      );
     case "rectangle":
     default:
       return (
@@ -352,9 +365,10 @@ export function createArchetypeShape(
 ) {
   const tlId = createShapeId();
 
-  if (archetype.iconShape === "arrow") {
-    // Arrow is special — it has no bound endpoints when dragged from the library.
-    // Start it as a 200px wide horizontal arrow at the drop position.
+  if (archetype.iconShape === "arrow" || archetype.iconShape === "line") {
+    // Both Arrow and Line use the DirectoorArrow shape — Line just sets
+    // both arrowheads to "none" so it's a plain connector.
+    const isLine = archetype.iconShape === "line";
     editor.createShape({
       id: tlId,
       type: "directoor-arrow",
@@ -373,12 +387,13 @@ export function createArchetypeShape(
         strokeWidth: 2,
         dash: "solid",
         startHead: "none",
-        endHead: "arrow",
+        endHead: isLine ? "none" : "arrow",
         path: "straight",
         label: "",
+        labelPosition: 0.5,
       },
     });
-    // Arrows don't get auto-edit (they may have empty labels by default)
+    // Arrows/lines don't get auto-edit (empty label by default)
     setTimeout(() => editor.select(tlId), 50);
     return tlId;
   }

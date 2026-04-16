@@ -250,6 +250,7 @@ function executeAction(
           endHead: conn.style.endHead === "none" ? "none" : "arrow",
           path: conn.style.path === "straight" ? "straight" : "elbow",
           label: conn.label || "",
+          labelPosition: 0.5,
         },
       });
       break;
