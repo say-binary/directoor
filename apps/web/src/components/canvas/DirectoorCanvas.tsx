@@ -1,13 +1,113 @@
 "use client";
 
 import { useCallback, useState, useEffect, useRef } from "react";
-import { Tldraw, Editor, TLShapeId, TLComponents } from "tldraw";
+import { Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions } from "tldraw";
 import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
+
+// ─── Document page configuration ─────────────────────────────────────────────
+// Directoor canvases behave like a Word doc: fixed page width, vertically
+// (effectively) infinite. The visual "page" is rendered as canvas chrome via
+// the OnTheCanvas slot below. The camera is constrained horizontally so the
+// page always stays in view, but pinch-zoom remains free in both directions.
+//
+// PAGE_WIDTH:   12 grid columns at 100px = 1200px. Wide enough for 4-column
+//               architecture diagrams without crowding.
+// PAGE_HEIGHT:  100,000px. Effectively infinite for any realistic session.
+// PAGE_PADDING: viewport gutter around the page when fully fitted.
+const PAGE_WIDTH = 1200;
+const PAGE_HEIGHT = 100000;
+const PAGE_PADDING = 80;
+
+/** "Page" rectangle rendered in canvas-coordinate space. Scales with zoom,
+ * sits in the OnTheCanvas slot (above tldraw's grid layer), and is
+ * non-interactive (pointer-events: none).
+ *
+ * The fill is intentionally semi-transparent so tldraw's native grid bleeds
+ * through. This preserves snap-to-grid behavior and the visual grid the user
+ * expects, while still giving a clear "page" boundary via the shadow + border. */
+const PageBackground = () => (
+  <div
+    style={{
+      position: "absolute",
+      left: 0,
+      top: 0,
+      width: PAGE_WIDTH,
+      height: PAGE_HEIGHT,
+      // 88% white over tldraw's canvas color — page is clearly visible
+      // but grid lines remain perceptible.
+      background: "rgba(255, 255, 255, 0.88)",
+      boxShadow: "0 4px 32px rgba(15,23,42,0.10), 0 0 0 1px rgba(15,23,42,0.06)",
+      borderRadius: 4,
+      pointerEvents: "none",
+    }}
+  />
+);
+
+/** Camera constraints: horizontally contained, vertically free. Pinch-zoom
+ * stays free in both axes — `contain` is a position constraint, not a zoom
+ * lock. Initial / base zoom = fit page width to viewport. */
+const cameraOptions: TLCameraOptions = {
+  isLocked: false,
+  wheelBehavior: "pan",
+  panSpeed: 1,
+  zoomSpeed: 1,
+  zoomSteps: [0.1, 0.25, 0.5, 1, 2, 4, 8],
+  constraints: {
+    initialZoom: "fit-x",
+    baseZoom: "fit-x",
+    bounds: { x: 0, y: 0, w: PAGE_WIDTH, h: PAGE_HEIGHT },
+    padding: { x: PAGE_PADDING, y: PAGE_PADDING },
+    origin: { x: 0.5, y: 0 },
+    behavior: { x: "contain", y: "free" },
+  },
+};
 
 // Hide tldraw UI elements we don't need
 const hiddenComponents: TLComponents = {
   PageMenu: null,         // Remove "Page 1" dropdown
+  OnTheCanvas: PageBackground, // White document page chrome
 };
+
+/**
+ * Recenter all shapes horizontally inside the page bounds [0, PAGE_WIDTH].
+ *
+ * Used as a one-time migration when an existing (pre-page) canvas loads:
+ * legacy canvases were laid out across the unbounded 2D plane, so shapes
+ * may sit far off-page where the new page-constrained camera can't reach
+ * them. We compute the content's horizontal bounding box and translate
+ * everything by a single delta so the content's center sits at the page
+ * center. Vertical positions are preserved.
+ *
+ * Only runs when needed — if all content is already inside the page,
+ * this is a no-op.
+ */
+function autoRecenterShapesInsidePage(editor: Editor) {
+  const shapes = editor.getCurrentPageShapes();
+  if (shapes.length === 0) return;
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const s of shapes) {
+    const w = (s.props as { w?: number }).w ?? 0;
+    if (s.x < minX) minX = s.x;
+    if (s.x + w > maxX) maxX = s.x + w;
+  }
+
+  // Already inside page bounds with breathing room? No-op.
+  if (minX >= 0 && maxX <= PAGE_WIDTH) return;
+
+  const contentWidth = maxX - minX;
+  // If content is wider than the page, just left-align at 0; otherwise center it.
+  const targetMinX = contentWidth >= PAGE_WIDTH ? 0 : (PAGE_WIDTH - contentWidth) / 2;
+  const dx = targetMinX - minX;
+
+  if (Math.abs(dx) < 1) return;
+
+  editor.markHistoryStoppingPoint("Migrate to page layout");
+  editor.updateShapes(
+    shapes.map((s) => ({ id: s.id, type: s.type, x: s.x + dx })),
+  );
+}
 import "tldraw/tldraw.css";
 import { createCanvasStore } from "@directoor/core";
 import { CommandBar } from "../command-bar/CommandBar";
@@ -64,6 +164,12 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
     editorInstance.updateInstanceState({ isGridMode: true });
+    // Land the user at the top of the page. cameraOptions.initialZoom
+    // already fits the page horizontally; this just snaps Y to the top.
+    editorInstance.setCamera(
+      { x: 0, y: 0, z: editorInstance.getCamera().z },
+      { immediate: true },
+    );
     onEditorReady?.(editorInstance);
   }, [onEditorReady]);
 
@@ -276,6 +382,13 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
                 }
               }
               editor.store.loadStoreSnapshot(saved.tldrawSnapshot as any);
+
+              // ── Migration: recenter shapes inside the new page bounds ──
+              // Older canvases were laid out across the unbounded 2D plane.
+              // Fit them horizontally inside [0, PAGE_WIDTH] so they're
+              // reachable now that the camera is page-constrained. Vertical
+              // positions are preserved (page is effectively infinite tall).
+              autoRecenterShapesInsidePage(editor);
             } catch (e) {
               console.warn("Could not restore canvas snapshot, starting fresh:", e);
             }
@@ -616,6 +729,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         onMount={handleMount}
         components={hiddenComponents}
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
+        cameraOptions={cameraOptions}
       />
 
       {/* Top-right floating toolbar — export + share */}
