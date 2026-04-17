@@ -191,10 +191,12 @@ export function InlineImagePicker({
     setTimeout(onClose, 800);
   };
 
-  // Position the picker beneath the click point, clamped to viewport
-  const PICKER_W = 560;
+  // Position the picker beneath the click point, clamped to viewport.
+  // PICKER_W = 640 fits a 5-column × 2-row grid of ~120px thumbnails comfortably;
+  // vertical clamp reserves 460px for grid + controls + "Added ✓" flash.
+  const PICKER_W = 640;
   const left = Math.max(16, Math.min(screenPosition.x - PICKER_W / 2, window.innerWidth - PICKER_W - 16));
-  const top = Math.min(screenPosition.y + 12, window.innerHeight - 360);
+  const top = Math.min(screenPosition.y + 12, window.innerHeight - 460);
 
   return (
     <div
