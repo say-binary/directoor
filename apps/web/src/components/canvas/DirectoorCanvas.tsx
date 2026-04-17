@@ -147,17 +147,41 @@ function PageEdges() {
         Math.ceil(rightMostShapeEdge(editor) + 8),
       );
 
-      const onMove = (ev: PointerEvent) => {
-        const dxScreen = ev.clientX - startScreenX;
+      // Capture the pointer so we keep getting events even if the cursor
+      // momentarily leaves the handle's hit-area while flicking the mouse.
+      const targetEl = e.currentTarget;
+      try { targetEl.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+
+      // RAF-coalesce pointermove updates: each frame we apply the most
+      // recent cursor X exactly once. Avoids dozens of re-renders per
+      // frame on high-Hz mice / trackpads, and makes the visual track
+      // the cursor without lag or stutter.
+      let pendingX: number | null = null;
+      let rafId = 0;
+      const flush = () => {
+        rafId = 0;
+        if (pendingX === null) return;
+        const dxScreen = pendingX - startScreenX;
         const dxPage = dxScreen / editor.getCamera().z;
         const newWidth = Math.max(
           minWidth,
           Math.min(MAX_PAGE_WIDTH, startWidth + dxPage),
         );
         pageWidthAtom.set(newWidth);
+        pendingX = null;
+      };
+
+      const onMove = (ev: PointerEvent) => {
+        pendingX = ev.clientX;
+        if (rafId === 0) rafId = requestAnimationFrame(flush);
       };
       const onUp = () => {
+        if (rafId !== 0) {
+          cancelAnimationFrame(rafId);
+          flush(); // apply final position so we don't end mid-move
+        }
         isDraggingRef.current = false;
+        try { targetEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
       };
@@ -232,66 +256,92 @@ function PageEdges() {
 }
 
 /**
- * OffPageMask — dark-grey overlay covering everything OUTSIDE the page
- * (left of x=0, right of x=pageWidth, above y=0). Rendered via the
- * OnTheCanvas slot so it lives in canvas coordinates and scales/scrolls
- * with the camera. tldraw renders OnTheCanvas content above the grid, so
- * the grid is naturally hidden in the off-page area.
+ * ScreenSpaceMask — paints a soft light-grey "desk" that frames the page
+ * within the surrounding chrome (sidebar on the left, floating toolbar on
+ * the right). Lives in screen space (NOT canvas space), so it respects:
  *
- * Inside the page (x in [0, pageWidth], y >= 0) renders nothing — the
- * grid + tldraw default canvas remain visible.
+ *   --ds-sidebar-w   left gap (sidebar's current width, published by Sidebar)
+ *   --ds-toolbar-w   right gap (toolbar's current width, published by CanvasToolbar)
  *
- * Three rectangles (left, right, top) are stacked at extreme coordinates
- * so they cover any visible viewport area regardless of zoom level.
+ * The two side strips compute their inner edges from the camera via
+ * editor.pageToScreen(), so they hug the page edges exactly as the
+ * camera pans/zooms or as the user drags the right edge to resize the
+ * page. pointerEvents: 'all' absorbs double-clicks so users can't spawn
+ * the InlineCommand in the off-page area.
+ *
+ * Color is intentionally a soft slate-200 — clearly distinguishes
+ * "off page" from the white page area without the dark-mode feel that
+ * a darker mask gives.
  */
-function OffPageMask() {
+function ScreenSpaceMask() {
+  const editor = useEditor();
   const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
-  const FAR = 1_000_000;
-  const dark = "#1F2937"; // slate-800
-  // pointerEvents: "all" so clicks in the dark area are absorbed — user
-  // can't double-click into the off-page area to spawn the InlineCommand
-  // and thus can't create shapes outside the page.
-  const maskStyle = { background: dark, pointerEvents: "all" as const };
+  // Subscribe to camera so the mask hugs the page through pan/zoom.
+  useValue("camera", () => editor.getCamera(), [editor]);
+
+  const pageLeftScreen = editor.pageToScreen({ x: 0, y: 0 }).x;
+  const pageRightScreen = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
+
+  const baseStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 0,
+    height: "100vh",
+    background: "#E2E8F0", // slate-200 — soft light grey, not dark-mode
+    pointerEvents: "all",
+    zIndex: 9990,
+  };
+
+  // Read chrome widths fresh on every render (cheap; CSS vars can change
+  // without React re-render and we want the mask to reflect that).
+  const sidebarW = getCssVarPx("--ds-sidebar-w");
+  const toolbarW = getCssVarPx("--ds-toolbar-w");
+  const GAP = 8;
+
+  // Left strip: from (sidebar-end + GAP) to page's left edge.
+  const leftStripLeft = sidebarW + GAP;
+  const leftStripWidth = Math.max(0, pageLeftScreen - leftStripLeft);
+
+  // Right strip: from page's right edge to (viewport-right - toolbar - GAP).
+  const rightStripLeft = pageRightScreen;
+  const rightStripWidth = Math.max(
+    0,
+    (typeof window !== "undefined" ? window.innerWidth : 0) - toolbarW - GAP - pageRightScreen,
+  );
+
   return (
     <>
-      {/* Above page (y < 0) */}
-      <div style={{
-        position: "absolute",
-        left: -FAR, top: -FAR,
-        width: 2 * FAR, height: FAR,
-        ...maskStyle,
-      }} />
-      {/* Left of page (x < 0) */}
-      <div style={{
-        position: "absolute",
-        left: -FAR, top: 0,
-        width: FAR, height: 2 * FAR,
-        ...maskStyle,
-      }} />
-      {/* Right of page (x > pageWidth) — width tracks pageWidth via useValue */}
-      <div style={{
-        position: "absolute",
-        left: pageWidth, top: 0,
-        width: FAR, height: 2 * FAR,
-        ...maskStyle,
-      }} />
-      {/* 1px subtle accent at the LEFT edge (boundary indicator) */}
-      <div style={{
-        position: "absolute",
-        left: 0, top: 0,
-        width: 1, height: PAGE_HEIGHT,
-        background: "rgba(255,255,255,0.40)",
-        pointerEvents: "none",
-      }} />
+      <div style={{ ...baseStyle, left: leftStripLeft, width: leftStripWidth }} />
+      <div style={{ ...baseStyle, left: rightStripLeft, width: rightStripWidth }} />
     </>
   );
 }
 
-// Hide tldraw UI elements we don't need; mount page chrome.
+/** Small helper: read a CSS pixel variable from :root, fallback 0. */
+function getCssVarPx(name: string): number {
+  if (typeof window === "undefined") return 0;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return parseFloat(v) || 0;
+}
+
+/**
+ * PageChrome — bundles the off-page mask + the left/right page edges
+ * into one component. Both need `useEditor()`, which is only available
+ * inside tldraw's render tree, so they're mounted via the
+ * InFrontOfTheCanvas slot together.
+ */
+function PageChrome() {
+  return (
+    <>
+      <ScreenSpaceMask />
+      <PageEdges />
+    </>
+  );
+}
+
+// Hide tldraw UI elements we don't need; mount the chrome.
 const tlComponents: TLComponents = {
   PageMenu: null,
-  OnTheCanvas: OffPageMask, // dark-grey mask outside page (canvas-coord)
-  InFrontOfTheCanvas: PageEdges, // matching left + right edges (screen-coord)
+  InFrontOfTheCanvas: PageChrome,
 };
 
 /**

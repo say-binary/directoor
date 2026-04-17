@@ -40,6 +40,14 @@ type SidebarTab = "canvases" | "shapes" | "images";
 export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, tier = "free" }: SidebarProps) {
   const { user, signOut } = useAuth();
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Publish current sidebar width as a CSS variable so the page-edge mask
+  // and any other chrome can leave a gap rather than slide underneath.
+  // 48px when collapsed (matches w-12), 256px when expanded (w-64).
+  useEffect(() => {
+    const w = isCollapsed ? 48 : 256;
+    document.documentElement.style.setProperty("--ds-sidebar-w", `${w}px`);
+  }, [isCollapsed]);
   const [canvases, setCanvases] = useState<CanvasListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);

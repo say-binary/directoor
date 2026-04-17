@@ -19,9 +19,25 @@ body,
   overflow: hidden;
 }
 
-/* tldraw container must fill its parent */
+/* tldraw container fills the available area between the surrounding
+   chrome (sidebar on left, floating toolbar on right). The CSS vars are
+   published by Sidebar (--ds-sidebar-w) and CanvasToolbar (--ds-toolbar-w)
+   and update live as those panels collapse/expand. */
 .tldraw-container {
   position: relative;
   width: 100%;
   height: 100%;
+}
+
+/* Inset the tldraw editor itself so its viewport (and therefore the
+   page that fills it) sits between the sidebar and floating toolbar
+   instead of stretching under them. */
+.tldraw-container > .tl-container {
+  position: absolute !important;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--ds-sidebar-w, 0px) + 8px);
+  right: calc(var(--ds-toolbar-w, 0px) + 8px);
+  width: auto !important;
+  height: auto !important;
 }
