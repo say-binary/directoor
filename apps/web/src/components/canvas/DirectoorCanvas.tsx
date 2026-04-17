@@ -326,8 +326,15 @@ function ConditionalStylePanel() {
 }
 
 // Hide tldraw UI elements we don't need; mount the chrome.
+// Removed:
+//   - MenuPanel (top-left hamburger) — duplicates Sidebar + shortcuts
+//   - QuickActions (top-left undo/redo/trash/copy) — covered by Cmd+Z,
+//     Cmd+Shift+Z, Backspace, Cmd+D keyboard shortcuts
+// Kept (user explicitly asked): NavigationPanel (minimap + zoom).
 const tlComponents: TLComponents = {
   PageMenu: null,
+  MenuPanel: null,                     // top-left hamburger (redundant)
+  QuickActions: null,                  // top-left undo/redo/trash/copy
   Background: DeskBackground,          // uniform slate-200 desk
   OnTheCanvas: PageBackground,         // page on top — white + dot grid
   InFrontOfTheCanvas: PageChrome,      // grab handle + position publisher
