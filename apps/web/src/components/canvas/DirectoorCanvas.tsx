@@ -58,6 +58,21 @@ function makeCameraOptions(pageWidth: number): TLCameraOptions {
 }
 
 /**
+ * Compute the right-most edge of any shape currently on the page. Used to
+ * prevent the user from shrinking the page narrower than its content.
+ */
+function rightMostShapeEdge(editor: Editor): number {
+  const shapes = editor.getCurrentPageShapes();
+  if (shapes.length === 0) return 0;
+  let maxRight = 0;
+  for (const s of shapes) {
+    const w = (s.props as { w?: number }).w ?? 0;
+    if (s.x + w > maxRight) maxRight = s.x + w;
+  }
+  return maxRight;
+}
+
+/**
  * PageRightEdgeHandle — vertical strip at the right edge of the page,
  * rendered via tldraw's InFrontOfTheCanvas slot (canvas-coord space, so it
  * sits at exactly `pageWidth` in canvas units and scrolls with the page).
@@ -66,29 +81,77 @@ function makeCameraOptions(pageWidth: number): TLCameraOptions {
  * Drag updates the atom; the parent DirectoorCanvas listens to the atom
  * and pushes new constraints into the editor + schedules a save.
  *
- * Constraint: rightward only. Dragging left past the start width is a
- * no-op (the lower clamp = startWidth at drag start).
+ * Drag is bidirectional: rightward grows the page, leftward shrinks it.
+ * Lower clamp on shrink is `max(INITIAL_PAGE_WIDTH, right-most-shape-edge)`
+ * so we never push existing shapes outside the page (data-integrity rule).
  */
-function PageRightEdgeHandle() {
+/**
+ * Shared visual style for both page edges. They look identical so the page
+ * reads as a clearly-bounded "card" floating on the dark canvas. The right
+ * edge is also draggable; the left edge is purely decorative (left is fixed
+ * at canvas x=0).
+ */
+const EDGE_BASE_STYLE = {
+  position: "absolute" as const,
+  top: 0,
+  width: 10,
+  height: "100vh",
+  background:
+    "linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0.0) 100%)",
+  zIndex: 100,
+};
+
+const EDGE_RIDGE = {
+  position: "absolute" as const,
+  top: 0,
+  width: 1,
+  height: "100vh",
+  background: "rgba(255,255,255,0.85)",
+  boxShadow: "0 0 8px 1px rgba(255,255,255,0.40)",
+};
+
+/**
+ * PageEdges — renders BOTH page boundaries as matching beautiful strips.
+ *
+ *  Left edge  (canvas x=0):       decorative only, fixed
+ *  Right edge (canvas x=pageWidth): same look + draggable to resize
+ *
+ * Both render in the InFrontOfTheCanvas slot. That slot is outside the
+ * tldraw camera transform, so we manually convert canvas→screen X via
+ *     screen_x = (canvas_x - camera.x) * camera.z
+ * and re-render whenever the camera changes.
+ *
+ * Right-edge drag is bidirectional (rightward grows, leftward shrinks).
+ * Lower clamp is `max(INITIAL_PAGE_WIDTH, right-most-shape-edge)` so we
+ * never push existing shapes off the page.
+ */
+function PageEdges() {
   const editor = useEditor();
   const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
+  const camera = useValue("camera", () => editor.getCamera(), [editor]);
   const isDraggingRef = useRef(false);
 
-  const onPointerDown = useCallback(
+  // Convert canvas X to screen X (InFrontOfTheCanvas is in screen coords).
+  const leftScreenX = (0 - camera.x) * camera.z;
+  const rightScreenX = (pageWidth - camera.x) * camera.z;
+
+  const onRightPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       e.preventDefault();
       e.stopPropagation();
       isDraggingRef.current = true;
       const startWidth = pageWidthAtom.get();
       const startScreenX = e.clientX;
+      const minWidth = Math.max(
+        INITIAL_PAGE_WIDTH,
+        Math.ceil(rightMostShapeEdge(editor) + 8),
+      );
 
       const onMove = (ev: PointerEvent) => {
         const dxScreen = ev.clientX - startScreenX;
         const dxPage = dxScreen / editor.getCamera().z;
-        // Rightward-only: lower clamp is startWidth (dragging left past the
-        // original edge does nothing). Upper clamp is the safety cap.
         const newWidth = Math.max(
-          startWidth,
+          minWidth,
           Math.min(MAX_PAGE_WIDTH, startWidth + dxPage),
         );
         pageWidthAtom.set(newWidth);
@@ -105,37 +168,99 @@ function PageRightEdgeHandle() {
   );
 
   return (
-    <div
-      onPointerDown={onPointerDown}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "rgba(59,130,246,0.18)";
-      }}
-      onMouseLeave={(e) => {
-        if (!isDraggingRef.current) {
-          e.currentTarget.style.background = "rgba(15,23,42,0.04)";
-        }
-      }}
-      title="Drag to widen the page"
-      style={{
-        position: "absolute",
-        left: pageWidth - 3,
-        top: 0,
-        width: 6,
-        height: PAGE_HEIGHT,
-        cursor: "ew-resize",
-        background: "rgba(15,23,42,0.04)",
-        borderLeft: "1px solid rgba(15,23,42,0.10)",
-        zIndex: 100,
-        pointerEvents: "all",
-      }}
-    />
+    <>
+      {/* LEFT edge — decorative, fixed at canvas x=0 */}
+      <div style={{ ...EDGE_BASE_STYLE, left: leftScreenX - 5, pointerEvents: "none" }}>
+        <div style={{ ...EDGE_RIDGE, left: 4 }} />
+      </div>
+
+      {/* RIGHT edge — draggable, at canvas x=pageWidth */}
+      <div
+        onPointerDown={onRightPointerDown}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background =
+            "linear-gradient(90deg, rgba(59,130,246,0.0) 0%, rgba(59,130,246,0.55) 50%, rgba(59,130,246,0.0) 100%)";
+        }}
+        onMouseLeave={(e) => {
+          if (!isDraggingRef.current) {
+            e.currentTarget.style.background = EDGE_BASE_STYLE.background;
+          }
+        }}
+        title="Drag to resize the page"
+        style={{
+          ...EDGE_BASE_STYLE,
+          left: rightScreenX - 5,
+          cursor: "ew-resize",
+          pointerEvents: "all",
+        }}
+      >
+        <div style={{ ...EDGE_RIDGE, left: 4 }} />
+      </div>
+    </>
   );
 }
 
-// Hide tldraw UI elements we don't need; mount the page-edge handle.
+/**
+ * OffPageMask — dark-grey overlay covering everything OUTSIDE the page
+ * (left of x=0, right of x=pageWidth, above y=0). Rendered via the
+ * OnTheCanvas slot so it lives in canvas coordinates and scales/scrolls
+ * with the camera. tldraw renders OnTheCanvas content above the grid, so
+ * the grid is naturally hidden in the off-page area.
+ *
+ * Inside the page (x in [0, pageWidth], y >= 0) renders nothing — the
+ * grid + tldraw default canvas remain visible.
+ *
+ * Three rectangles (left, right, top) are stacked at extreme coordinates
+ * so they cover any visible viewport area regardless of zoom level.
+ */
+function OffPageMask() {
+  const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
+  const FAR = 1_000_000;
+  const dark = "#1F2937"; // slate-800
+  // pointerEvents: "all" so clicks in the dark area are absorbed — user
+  // can't double-click into the off-page area to spawn the InlineCommand
+  // and thus can't create shapes outside the page.
+  const maskStyle = { background: dark, pointerEvents: "all" as const };
+  return (
+    <>
+      {/* Above page (y < 0) */}
+      <div style={{
+        position: "absolute",
+        left: -FAR, top: -FAR,
+        width: 2 * FAR, height: FAR,
+        ...maskStyle,
+      }} />
+      {/* Left of page (x < 0) */}
+      <div style={{
+        position: "absolute",
+        left: -FAR, top: 0,
+        width: FAR, height: 2 * FAR,
+        ...maskStyle,
+      }} />
+      {/* Right of page (x > pageWidth) — width tracks pageWidth via useValue */}
+      <div style={{
+        position: "absolute",
+        left: pageWidth, top: 0,
+        width: FAR, height: 2 * FAR,
+        ...maskStyle,
+      }} />
+      {/* 1px subtle accent at the LEFT edge (boundary indicator) */}
+      <div style={{
+        position: "absolute",
+        left: 0, top: 0,
+        width: 1, height: PAGE_HEIGHT,
+        background: "rgba(255,255,255,0.40)",
+        pointerEvents: "none",
+      }} />
+    </>
+  );
+}
+
+// Hide tldraw UI elements we don't need; mount page chrome.
 const tlComponents: TLComponents = {
   PageMenu: null,
-  InFrontOfTheCanvas: PageRightEdgeHandle,
+  OnTheCanvas: OffPageMask, // dark-grey mask outside page (canvas-coord)
+  InFrontOfTheCanvas: PageEdges, // matching left + right edges (screen-coord)
 };
 
 /**
@@ -256,28 +381,57 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   }, [canvasId]);
 
   // ─── Shape clamping: shapes can never live outside the page ─────────
-  // Use tldraw's store side-effects API. registerBeforeCreateHandler
-  // intercepts shape creation; registerBeforeChangeHandler intercepts
-  // every position update (including drags). Returning a different
-  // record clamps; returning the same record passes through unchanged.
-  // Reads pageWidth from the ref so the handler stays stable across
-  // page-width changes (no re-registration churn).
+  // Two-layer defence:
+  //  (1) Before-create / before-change side-effect handlers clamp shape
+  //      x, y, and (when present) shape width into the page. Reads
+  //      pageWidth from a ref so handlers stay stable across page-width
+  //      changes (no re-registration churn).
+  //  (2) After-change handler as a backstop — if anything (e.g. a tldraw
+  //      internal path that bypasses before-handlers, or a React batched
+  //      update race) lands a shape outside the page, this catches it
+  //      and force-corrects via editor.updateShape.
   useEffect(() => {
     if (!editor) return;
+
+    /** Clamp a shape record so it sits entirely inside [0, pageWidth] x
+     *  [0, ∞). If the shape has a `w` prop, also shrink it to fit when
+     *  it would otherwise extend past the right edge. Returns the same
+     *  reference if no clamp was needed. */
     const clampShape = (s: TLShape): TLShape => {
-      const w = (s.props as { w?: number }).w ?? 0;
-      const maxX = Math.max(0, pageWidthRef.current - w);
+      const props = s.props as { w?: number };
+      const pw = pageWidthRef.current;
+      const hasW = typeof props.w === "number" && props.w > 0;
+      // First clamp width: never larger than the page itself.
+      let nextW = props.w;
+      if (hasW && (props.w as number) > pw) nextW = pw;
+      const w = (nextW ?? 0);
+      const maxX = Math.max(0, pw - w);
       const x = Math.max(0, Math.min(maxX, s.x));
       const y = Math.max(0, s.y);
-      if (x === s.x && y === s.y) return s;
-      return { ...s, x, y };
+      const widthChanged = hasW && nextW !== props.w;
+      if (x === s.x && y === s.y && !widthChanged) return s;
+      return widthChanged
+        ? { ...s, x, y, props: { ...props, w: nextW } as typeof s.props }
+        : { ...s, x, y };
     };
+
     const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => clampShape(s));
     const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => clampShape(next));
-    return () => {
-      u1();
-      u2();
-    };
+    // After-change backstop. If somehow a shape landed off-page despite
+    // the before-handlers, force-correct it. Skip if the before-clamp
+    // already fixed it (cheap shallow check).
+    const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
+      const corrected = clampShape(next);
+      if (corrected !== next) {
+        // Use a microtask so we don't recurse inside the side-effect.
+        queueMicrotask(() => {
+          try {
+            editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
+          } catch { /* shape may have been deleted */ }
+        });
+      }
+    });
+    return () => { u1(); u2(); u3(); };
   }, [editor]);
 
   // ─── React to page-width changes (from drag handle or load) ─────────
