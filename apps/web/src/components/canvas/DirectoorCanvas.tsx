@@ -1,112 +1,161 @@
 "use client";
 
-import { useCallback, useState, useEffect, useRef } from "react";
-import { Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions } from "tldraw";
+import { useCallback, useState, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions, TLShape,
+  atom, useValue, useEditor,
+} from "tldraw";
 import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
 
 // ─── Document page configuration ─────────────────────────────────────────────
-// Directoor canvases behave like a Word doc: fixed page width, vertically
-// (effectively) infinite. The visual "page" is rendered as canvas chrome via
-// the OnTheCanvas slot below. The camera is constrained horizontally so the
-// page always stays in view, but pinch-zoom remains free in both directions.
+// Directoor canvases behave like a single Word/Notion-style page:
 //
-// PAGE_WIDTH:   12 grid columns at 100px = 1200px. Wide enough for 4-column
-//               architecture diagrams without crowding.
-// PAGE_HEIGHT:  100,000px. Effectively infinite for any realistic session.
-// PAGE_PADDING: viewport gutter around the page when fully fitted.
-const PAGE_WIDTH = 1200;
-const PAGE_HEIGHT = 100000;
-const PAGE_PADDING = 80;
+//   * Fixed initial width (1200px). The page IS the canvas — there is no
+//     visible space outside it; the camera is hard-clamped at the edges.
+//   * Hard top edge at y=0. User cannot pan/scroll above the start.
+//   * Vertically infinite downward (PAGE_HEIGHT is effectively a soft cap).
+//   * Right edge is user-draggable to widen the page (rightward only).
+//   * Per-canvas widened width is persisted in the canvas_state JSONB.
+const INITIAL_PAGE_WIDTH = 1200;
+const MAX_PAGE_WIDTH = 10000;        // safety cap
+const PAGE_HEIGHT = 100000;          // effectively infinite
 
-/** "Page" rectangle rendered in canvas-coordinate space. Scales with zoom,
- * sits in the OnTheCanvas slot (above tldraw's grid layer), and is
- * non-interactive (pointer-events: none).
+/**
+ * Reactive atom for the current page width. Module-scoped because tldraw
+ * components rendered via the `components` slot don't share React Context
+ * with our DirectoorCanvas (they live deep in tldraw's own render tree).
+ * The atom is reset to the saved value (or default) every time a new
+ * canvas loads. Single tab = single canvas at a time, so a module-level
+ * atom is safe.
+ */
+const pageWidthAtom = atom<number>("directoor.pageWidth", INITIAL_PAGE_WIDTH);
+
+/**
+ * Build camera options from a given page width. The camera is hard-clamped:
+ *  - x: 'contain' — at fit-x zoom (the only zoom-out level allowed by
+ *    zoomSteps starting at 1), the camera is fixed at the page origin.
+ *    Above fit zoom (zoomed in), horizontal pan is bounded inside the page.
+ *  - y: 'inside' — vertical pan is bounded to [0, PAGE_HEIGHT - viewport_h]
+ *    at every zoom. User cannot scroll above the top of the page.
+ *  - padding: 0 — the page IS the viewport at fit zoom; no slate margin.
+ */
+function makeCameraOptions(pageWidth: number): TLCameraOptions {
+  return {
+    isLocked: false,
+    wheelBehavior: "pan",
+    panSpeed: 1,
+    zoomSpeed: 1,
+    zoomSteps: [1, 1.5, 2, 3, 4, 6, 8],
+    constraints: {
+      initialZoom: "fit-x",
+      baseZoom: "fit-x",
+      bounds: { x: 0, y: 0, w: pageWidth, h: PAGE_HEIGHT },
+      padding: { x: 0, y: 0 },
+      origin: { x: 0.5, y: 0 },
+      behavior: { x: "contain", y: "inside" },
+    },
+  };
+}
+
+/**
+ * PageRightEdgeHandle — vertical strip at the right edge of the page,
+ * rendered via tldraw's InFrontOfTheCanvas slot (canvas-coord space, so it
+ * sits at exactly `pageWidth` in canvas units and scrolls with the page).
  *
- * The fill is intentionally semi-transparent so tldraw's native grid bleeds
- * through. This preserves snap-to-grid behavior and the visual grid the user
- * expects, while still giving a clear "page" boundary via the shadow + border. */
-const PageBackground = () => (
-  <div
-    style={{
-      position: "absolute",
-      left: 0,
-      top: 0,
-      width: PAGE_WIDTH,
-      height: PAGE_HEIGHT,
-      // 88% white over tldraw's canvas color — page is clearly visible
-      // but grid lines remain perceptible.
-      background: "rgba(255, 255, 255, 0.88)",
-      boxShadow: "0 4px 32px rgba(15,23,42,0.10), 0 0 0 1px rgba(15,23,42,0.06)",
-      borderRadius: 4,
-      pointerEvents: "none",
-    }}
-  />
-);
+ * Subscribes to pageWidthAtom so it re-renders live as the user drags.
+ * Drag updates the atom; the parent DirectoorCanvas listens to the atom
+ * and pushes new constraints into the editor + schedules a save.
+ *
+ * Constraint: rightward only. Dragging left past the start width is a
+ * no-op (the lower clamp = startWidth at drag start).
+ */
+function PageRightEdgeHandle() {
+  const editor = useEditor();
+  const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
+  const isDraggingRef = useRef(false);
 
-/** Camera constraints: horizontally contained, vertically free. Pinch-zoom
- * stays free in both axes — `contain` is a position constraint, not a zoom
- * lock. Initial / base zoom = fit page width to viewport. */
-const cameraOptions: TLCameraOptions = {
-  isLocked: false,
-  wheelBehavior: "pan",
-  panSpeed: 1,
-  zoomSpeed: 1,
-  zoomSteps: [0.1, 0.25, 0.5, 1, 2, 4, 8],
-  constraints: {
-    initialZoom: "fit-x",
-    baseZoom: "fit-x",
-    bounds: { x: 0, y: 0, w: PAGE_WIDTH, h: PAGE_HEIGHT },
-    padding: { x: PAGE_PADDING, y: PAGE_PADDING },
-    origin: { x: 0.5, y: 0 },
-    behavior: { x: "contain", y: "free" },
-  },
-};
+  const onPointerDown = useCallback(
+    (e: ReactPointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      isDraggingRef.current = true;
+      const startWidth = pageWidthAtom.get();
+      const startScreenX = e.clientX;
 
-// Hide tldraw UI elements we don't need
-const hiddenComponents: TLComponents = {
-  PageMenu: null,         // Remove "Page 1" dropdown
-  OnTheCanvas: PageBackground, // White document page chrome
+      const onMove = (ev: PointerEvent) => {
+        const dxScreen = ev.clientX - startScreenX;
+        const dxPage = dxScreen / editor.getCamera().z;
+        // Rightward-only: lower clamp is startWidth (dragging left past the
+        // original edge does nothing). Upper clamp is the safety cap.
+        const newWidth = Math.max(
+          startWidth,
+          Math.min(MAX_PAGE_WIDTH, startWidth + dxPage),
+        );
+        pageWidthAtom.set(newWidth);
+      };
+      const onUp = () => {
+        isDraggingRef.current = false;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [editor],
+  );
+
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "rgba(59,130,246,0.18)";
+      }}
+      onMouseLeave={(e) => {
+        if (!isDraggingRef.current) {
+          e.currentTarget.style.background = "rgba(15,23,42,0.04)";
+        }
+      }}
+      title="Drag to widen the page"
+      style={{
+        position: "absolute",
+        left: pageWidth - 3,
+        top: 0,
+        width: 6,
+        height: PAGE_HEIGHT,
+        cursor: "ew-resize",
+        background: "rgba(15,23,42,0.04)",
+        borderLeft: "1px solid rgba(15,23,42,0.10)",
+        zIndex: 100,
+        pointerEvents: "all",
+      }}
+    />
+  );
+}
+
+// Hide tldraw UI elements we don't need; mount the page-edge handle.
+const tlComponents: TLComponents = {
+  PageMenu: null,
+  InFrontOfTheCanvas: PageRightEdgeHandle,
 };
 
 /**
- * Recenter all shapes horizontally inside the page bounds [0, PAGE_WIDTH].
+ * Walk all shapes on the current page, find their right-most edge, and
+ * return the page width needed to comfortably contain them (with 80px of
+ * right padding). Returns 0 if there are no shapes.
  *
- * Used as a one-time migration when an existing (pre-page) canvas loads:
- * legacy canvases were laid out across the unbounded 2D plane, so shapes
- * may sit far off-page where the new page-constrained camera can't reach
- * them. We compute the content's horizontal bounding box and translate
- * everything by a single delta so the content's center sits at the page
- * center. Vertical positions are preserved.
- *
- * Only runs when needed — if all content is already inside the page,
- * this is a no-op.
+ * Used during canvas load: legacy / pre-page canvases may have content
+ * extending past the initial page width. Rather than compress the layout,
+ * we grow the page so all content is reachable.
  */
-function autoRecenterShapesInsidePage(editor: Editor) {
+function neededWidthForExistingShapes(editor: Editor): number {
   const shapes = editor.getCurrentPageShapes();
-  if (shapes.length === 0) return;
-
-  let minX = Infinity;
-  let maxX = -Infinity;
+  if (shapes.length === 0) return 0;
+  let maxRight = 0;
   for (const s of shapes) {
     const w = (s.props as { w?: number }).w ?? 0;
-    if (s.x < minX) minX = s.x;
-    if (s.x + w > maxX) maxX = s.x + w;
+    if (s.x + w > maxRight) maxRight = s.x + w;
   }
-
-  // Already inside page bounds with breathing room? No-op.
-  if (minX >= 0 && maxX <= PAGE_WIDTH) return;
-
-  const contentWidth = maxX - minX;
-  // If content is wider than the page, just left-align at 0; otherwise center it.
-  const targetMinX = contentWidth >= PAGE_WIDTH ? 0 : (PAGE_WIDTH - contentWidth) / 2;
-  const dx = targetMinX - minX;
-
-  if (Math.abs(dx) < 1) return;
-
-  editor.markHistoryStoppingPoint("Migrate to page layout");
-  editor.updateShapes(
-    shapes.map((s) => ({ id: s.id, type: s.type, x: s.x + dx })),
-  );
+  return Math.ceil(maxRight + 80);
 }
 import "tldraw/tldraw.css";
 import { createCanvasStore } from "@directoor/core";
@@ -161,11 +210,22 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   // Double-click detection
   const lastClickRef = useRef<{ time: number; x: number; y: number } | null>(null);
 
+  // Reactive subscription to the page-width atom. Re-renders this component
+  // whenever the user drags the right edge handle.
+  const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
+  // Stable ref for use inside tldraw side-effect handlers (which can't
+  // capture React state cleanly across re-renders).
+  const pageWidthRef = useRef(pageWidth);
+  pageWidthRef.current = pageWidth;
+
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
     editorInstance.updateInstanceState({ isGridMode: true });
-    // Land the user at the top of the page. cameraOptions.initialZoom
-    // already fits the page horizontally; this just snaps Y to the top.
+    // Apply page constraints immediately. Initial value is the atom's
+    // current value, which loadCanvas overrides with the saved width
+    // shortly after.
+    editorInstance.setCameraOptions(makeCameraOptions(pageWidthAtom.get()));
+    // Land the user at the top of the page.
     editorInstance.setCamera(
       { x: 0, y: 0, z: editorInstance.getCamera().z },
       { immediate: true },
@@ -187,11 +247,55 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   // Without this, the save effects fire on mount and overwrite the DB
   // with an empty snapshot before the load completes.
   const hasLoadedRef = useRef(false);
-  // Reset load flag when canvasId changes (we're switching canvases)
+  // Reset load flag + page width on canvas switch. The width snaps back
+  // to the default until loadCanvas restores the saved value.
   useEffect(() => {
     hasLoadedRef.current = false;
     lastSavedRef.current = "";
+    pageWidthAtom.set(INITIAL_PAGE_WIDTH);
   }, [canvasId]);
+
+  // ─── Shape clamping: shapes can never live outside the page ─────────
+  // Use tldraw's store side-effects API. registerBeforeCreateHandler
+  // intercepts shape creation; registerBeforeChangeHandler intercepts
+  // every position update (including drags). Returning a different
+  // record clamps; returning the same record passes through unchanged.
+  // Reads pageWidth from the ref so the handler stays stable across
+  // page-width changes (no re-registration churn).
+  useEffect(() => {
+    if (!editor) return;
+    const clampShape = (s: TLShape): TLShape => {
+      const w = (s.props as { w?: number }).w ?? 0;
+      const maxX = Math.max(0, pageWidthRef.current - w);
+      const x = Math.max(0, Math.min(maxX, s.x));
+      const y = Math.max(0, s.y);
+      if (x === s.x && y === s.y) return s;
+      return { ...s, x, y };
+    };
+    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => clampShape(s));
+    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => clampShape(next));
+    return () => {
+      u1();
+      u2();
+    };
+  }, [editor]);
+
+  // ─── React to page-width changes (from drag handle or load) ─────────
+  // When pageWidth changes, push new constraints into the editor and
+  // schedule a save so the new width persists. Skipped on the initial
+  // mount where handleMount already applied options.
+  const lastAppliedWidthRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editor) return;
+    if (lastAppliedWidthRef.current === pageWidth) return;
+    lastAppliedWidthRef.current = pageWidth;
+    editor.setCameraOptions(makeCameraOptions(pageWidth));
+    // Only schedule a save once the canvas has fully loaded (otherwise
+    // we'd save the default width before the saved width is restored).
+    if (hasLoadedRef.current) {
+      scheduleSaveRef.current?.();
+    }
+  }, [editor, pageWidth]);
 
   /**
    * Core save function. Multiple safety layers:
@@ -222,6 +326,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           sequence: r.sequence,
           isLooping: r.isLooping,
         })),
+        pageWidth: pageWidthRef.current,
       };
 
       const saveStr = JSON.stringify(savePayload);
@@ -260,6 +365,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(doSave, 2000);
   }, [doSave]);
+  // Expose scheduleSave to effects defined earlier in the function body
+  // (page-width effect needs to trigger a save when the user resizes).
+  const scheduleSaveRef = useRef<(() => void) | null>(null);
+  useEffect(() => { scheduleSaveRef.current = scheduleSave; }, [scheduleSave]);
 
   // Expose save function to parent so it can save before switching canvases
   useEffect(() => {
@@ -283,6 +392,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         animationRegions: regions.map((r) => ({
           id: r.id, shapeIds: r.shapeIds, sequence: r.sequence, isLooping: r.isLooping,
         })),
+        pageWidth: pageWidthRef.current,
       };
 
       const allShapes = ed.getCurrentPageShapes();
@@ -382,17 +492,25 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
                 }
               }
               editor.store.loadStoreSnapshot(saved.tldrawSnapshot as any);
-
-              // ── Migration: recenter shapes inside the new page bounds ──
-              // Older canvases were laid out across the unbounded 2D plane.
-              // Fit them horizontally inside [0, PAGE_WIDTH] so they're
-              // reachable now that the camera is page-constrained. Vertical
-              // positions are preserved (page is effectively infinite tall).
-              autoRecenterShapesInsidePage(editor);
             } catch (e) {
               console.warn("Could not restore canvas snapshot, starting fresh:", e);
             }
           }
+
+          // ── Restore page width ─────────────────────────────────────
+          // Saved width takes priority. If absent (legacy canvas) or
+          // invalid, fall back to INITIAL_PAGE_WIDTH. Then run the
+          // growth migration: if existing shapes extend past the chosen
+          // width, grow it (rather than compress the layout) so all
+          // content remains reachable inside the new page-constrained
+          // camera. Width is always >= INITIAL and <= MAX.
+          const savedWidth =
+            typeof saved.pageWidth === "number" && saved.pageWidth >= INITIAL_PAGE_WIDTH
+              ? Math.min(saved.pageWidth, MAX_PAGE_WIDTH)
+              : INITIAL_PAGE_WIDTH;
+          const needed = neededWidthForExistingShapes(editor);
+          const restoredWidth = Math.min(MAX_PAGE_WIDTH, Math.max(savedWidth, needed));
+          pageWidthAtom.set(restoredWidth);
 
           // Restore animation regions
           if (Array.isArray(saved.animationRegions)) {
@@ -424,6 +542,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           animationRegions: animationRegionsRef.current.map((r) => ({
             id: r.id, shapeIds: r.shapeIds, sequence: r.sequence, isLooping: r.isLooping,
           })),
+          pageWidth: pageWidthRef.current,
         };
         lastSavedRef.current = JSON.stringify(initialPayload);
         hasLoadedRef.current = true;
@@ -727,9 +846,8 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     <div className="tldraw-container">
       <Tldraw
         onMount={handleMount}
-        components={hiddenComponents}
+        components={tlComponents}
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
-        cameraOptions={cameraOptions}
       />
 
       {/* Top-right floating toolbar — export + share */}
