@@ -3,7 +3,7 @@
 import { useCallback, useState, useEffect, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import {
   Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions, TLShape,
-  atom, useValue, useEditor,
+  atom, useValue, useEditor, DefaultStylePanel,
 } from "tldraw";
 import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
 
@@ -16,7 +16,10 @@ import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
 //   * Vertically infinite downward (PAGE_HEIGHT is effectively a soft cap).
 //   * Right edge is user-draggable to widen the page (rightward only).
 //   * Per-canvas widened width is persisted in the canvas_state JSONB.
-const INITIAL_PAGE_WIDTH = 1200;
+// US Letter page at 96dpi = 8.5" × 11" → 816px × 1056px. We use 816 as
+// the initial page width so the canvas matches a familiar Word-doc look.
+// User can drag the right edge to widen.
+const INITIAL_PAGE_WIDTH = 816;
 const MAX_PAGE_WIDTH = 10000;        // safety cap
 const PAGE_HEIGHT = 100000;          // effectively infinite
 
@@ -45,15 +48,16 @@ function makeCameraOptions(pageWidth: number): TLCameraOptions {
     wheelBehavior: "pan",
     panSpeed: 1,
     zoomSpeed: 1,
-    zoomSteps: [1, 1.5, 2, 3, 4, 6, 8],
+    // Discrete zoom levels: 50%..300%. Default is 100% (1:1 screen pixels
+    // per canvas unit) — the page renders at its actual Word-doc size
+    // and the surrounding grey desk is always visible on both sides on
+    // any reasonably-wide viewport.
+    zoomSteps: [0.5, 0.75, 1, 1.25, 1.5, 2, 3],
     constraints: {
-      initialZoom: "fit-x",
-      baseZoom: "fit-x",
+      initialZoom: "default", // 1:1 (not fit-x) — see zoomSteps comment
+      baseZoom: "default",
       bounds: { x: 0, y: 0, w: pageWidth, h: PAGE_HEIGHT },
-      // Non-zero padding so the off-page mask is ALWAYS visible as a
-      // dark-grey margin around the page — gives the user a clear
-      // "page sitting on a desk" Word-doc feel even at fit zoom.
-      padding: { x: 64, y: 0 },
+      padding: { x: 40, y: 0 },
       origin: { x: 0.5, y: 0 },
       behavior: { x: "contain", y: "inside" },
     },
@@ -88,23 +92,10 @@ function rightMostShapeEdge(editor: Editor): number {
  * Lower clamp on shrink is `max(INITIAL_PAGE_WIDTH, right-most-shape-edge)`
  * so we never push existing shapes outside the page (data-integrity rule).
  */
-/**
- * Shared visual style for both page edges. The page sits on a dark-grey
- * "desk" (the off-page mask), so each edge is a clearly visible dark
- * vertical line with a soft outer drop-shadow that fades into the desk —
- * the classic Word-doc page-on-desk look.
- */
-const EDGE_LINE_WIDTH = 2;
-const EDGE_HIT_WIDTH = 12;  // wider invisible hit area for easier drag
-
-const EDGE_LINE_STYLE = {
-  position: "absolute" as const,
-  top: 0,
-  width: EDGE_LINE_WIDTH,
-  height: "100vh",
-  background: "rgba(15, 23, 42, 0.55)", // slate-900 @ 55% — visible on white page
-  zIndex: 100,
-};
+// Grab-handle hit area — wider than its visible indicator so users can
+// grab it easily. The invisible hit area also satisfies Fitts's law for
+// smooth pointer capture.
+const EDGE_HIT_WIDTH = 14;
 
 /**
  * PageEdges — renders BOTH page boundaries as matching beautiful strips.
@@ -131,8 +122,7 @@ function PageEdges() {
   useValue("camera", () => editor.getCamera(), [editor]);
   const isDraggingRef = useRef(false);
 
-  // Convert canvas X to viewport-screen X via tldraw's own helper.
-  const leftScreenX = editor.pageToScreen({ x: 0, y: 0 }).x;
+  // Convert canvas X (page's right edge) to viewport-screen X.
   const rightScreenX = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
 
   const onRightPointerDown = useCallback(
@@ -192,156 +182,156 @@ function PageEdges() {
   );
 
   return (
-    <>
-      {/* LEFT edge — solid dark line at canvas x=0, decorative only */}
+    // Right-edge grab handle only — the page itself is visually defined by
+    // the white-on-grey contrast (PageBackground rendered in OnTheCanvas
+    // over the slate-200 tldraw background). No decorative edge lines.
+    <div
+      onPointerDown={onRightPointerDown}
+      onMouseEnter={(e) => {
+        (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "1";
+      }}
+      onMouseLeave={(e) => {
+        if (!isDraggingRef.current) {
+          (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "0";
+        }
+      }}
+      title="Drag to resize the page"
+      style={{
+        position: "absolute",
+        top: 0,
+        left: rightScreenX - EDGE_HIT_WIDTH / 2,
+        width: EDGE_HIT_WIDTH,
+        height: "100vh",
+        cursor: "ew-resize",
+        zIndex: 101,
+        pointerEvents: "all",
+        background: "transparent",
+      }}
+    >
+      {/* Hover indicator: soft blue line that fades in on hover/drag */}
       <div
-        style={{
-          ...EDGE_LINE_STYLE,
-          left: leftScreenX - EDGE_LINE_WIDTH / 2,
-          pointerEvents: "none",
-        }}
-      />
-
-      {/* RIGHT edge — solid dark line at canvas x=pageWidth */}
-      <div
-        style={{
-          ...EDGE_LINE_STYLE,
-          left: rightScreenX - EDGE_LINE_WIDTH / 2,
-          pointerEvents: "none",
-        }}
-      />
-
-      {/* RIGHT edge invisible hit area — wider than the visible line so
-          the user can grab it easily. Cursor changes to ew-resize on hover. */}
-      <div
-        onPointerDown={onRightPointerDown}
-        onMouseEnter={(e) => {
-          (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "1";
-        }}
-        onMouseLeave={(e) => {
-          if (!isDraggingRef.current) {
-            (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "0";
-          }
-        }}
-        title="Drag to resize the page"
         style={{
           position: "absolute",
+          left: (EDGE_HIT_WIDTH - 3) / 2,
           top: 0,
-          left: rightScreenX - EDGE_HIT_WIDTH / 2,
-          width: EDGE_HIT_WIDTH,
+          width: 3,
           height: "100vh",
-          cursor: "ew-resize",
-          zIndex: 101,
-          pointerEvents: "all",
-          background: "transparent",
+          background: "rgba(59, 130, 246, 0.85)",
+          borderRadius: 2,
+          opacity: 0,
+          transition: "opacity 120ms ease",
+          pointerEvents: "none",
         }}
-      >
-        {/* Hover indicator: a brighter blue line that fades in on hover */}
-        <div
-          style={{
-            position: "absolute",
-            left: (EDGE_HIT_WIDTH - 4) / 2,
-            top: 0,
-            width: 4,
-            height: "100vh",
-            background: "rgba(59, 130, 246, 0.85)",
-            opacity: 0,
-            transition: "opacity 120ms ease",
-            pointerEvents: "none",
-          }}
-        />
-      </div>
-    </>
+      />
+    </div>
   );
 }
 
 /**
- * ScreenSpaceMask — paints a soft light-grey "desk" that frames the page
- * within the surrounding chrome (sidebar on the left, floating toolbar on
- * the right). Lives in screen space (NOT canvas space), so it respects:
- *
- *   --ds-sidebar-w   left gap (sidebar's current width, published by Sidebar)
- *   --ds-toolbar-w   right gap (toolbar's current width, published by CanvasToolbar)
- *
- * The two side strips compute their inner edges from the camera via
- * editor.pageToScreen(), so they hug the page edges exactly as the
- * camera pans/zooms or as the user drags the right edge to resize the
- * page. pointerEvents: 'all' absorbs double-clicks so users can't spawn
- * the InlineCommand in the off-page area.
- *
- * Color is intentionally a soft slate-200 — clearly distinguishes
- * "off page" from the white page area without the dark-mode feel that
- * a darker mask gives.
+ * DeskBackground — replaces tldraw's default canvas background. A
+ * uniform slate-200 "desk" behind everything. Must set the ENTIRE
+ * visible area this color so the page (painted on top via OnTheCanvas)
+ * reads clearly as a white sheet on top of the desk.
  */
-function ScreenSpaceMask() {
+function DeskBackground() {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "#E2E8F0", // slate-200
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+/**
+ * PageBackground — the actual page, rendered in canvas coordinates via
+ * tldraw's OnTheCanvas slot. A clean white rectangle with a built-in
+ * radial-gradient dot grid, soft drop shadow, and rounded corners. The
+ * DeskBackground behind it (via the Background slot) provides the
+ * surrounding grey. Grid dots therefore appear ONLY on the page.
+ */
+function PageBackground() {
+  const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: pageWidth,
+        height: PAGE_HEIGHT,
+        background: "#FFFFFF",
+        // Dot grid baked into the page — shows only on the page, not on the desk.
+        backgroundImage: "radial-gradient(circle, #CBD5E1 1px, transparent 1.2px)",
+        backgroundSize: "24px 24px",
+        boxShadow: "0 2px 16px rgba(15,23,42,0.08)",
+        borderRadius: 4,
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+/**
+ * PagePositionPublisher — has no DOM output; its job is to subscribe to
+ * the camera + pageWidth and keep the `--ds-page-right-x` CSS variable
+ * up to date in screen coords. The floating toolbar and tldraw's
+ * StylePanel anchor their right edge to this variable so they always
+ * sit inside the page area (not over the grey desk).
+ */
+function PagePositionPublisher() {
   const editor = useEditor();
   const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
-  // Subscribe to camera so the mask hugs the page through pan/zoom.
-  useValue("camera", () => editor.getCamera(), [editor]);
-
-  const pageLeftScreen = editor.pageToScreen({ x: 0, y: 0 }).x;
-  const pageRightScreen = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
-
-  const baseStyle: React.CSSProperties = {
-    position: "fixed",
-    top: 0,
-    height: "100vh",
-    background: "#E2E8F0", // slate-200 — soft light grey, not dark-mode
-    pointerEvents: "all",
-    zIndex: 9990,
-  };
-
-  // Read chrome widths fresh on every render (cheap; CSS vars can change
-  // without React re-render and we want the mask to reflect that).
-  const sidebarW = getCssVarPx("--ds-sidebar-w");
-  const toolbarW = getCssVarPx("--ds-toolbar-w");
-  const GAP = 8;
-
-  // Left strip: from (sidebar-end + GAP) to page's left edge.
-  const leftStripLeft = sidebarW + GAP;
-  const leftStripWidth = Math.max(0, pageLeftScreen - leftStripLeft);
-
-  // Right strip: from page's right edge to (viewport-right - toolbar - GAP).
-  const rightStripLeft = pageRightScreen;
-  const rightStripWidth = Math.max(
-    0,
-    (typeof window !== "undefined" ? window.innerWidth : 0) - toolbarW - GAP - pageRightScreen,
-  );
-
-  return (
-    <>
-      <div style={{ ...baseStyle, left: leftStripLeft, width: leftStripWidth }} />
-      <div style={{ ...baseStyle, left: rightStripLeft, width: rightStripWidth }} />
-    </>
-  );
-}
-
-/** Small helper: read a CSS pixel variable from :root, fallback 0. */
-function getCssVarPx(name: string): number {
-  if (typeof window === "undefined") return 0;
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return parseFloat(v) || 0;
+  const camera = useValue("camera", () => editor.getCamera(), [editor]);
+  useEffect(() => {
+    const rightX = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
+    document.documentElement.style.setProperty("--ds-page-right-x", `${rightX}px`);
+  }, [editor, pageWidth, camera]);
+  return null;
 }
 
 /**
- * PageChrome — bundles the off-page mask + the left/right page edges
- * into one component. Both need `useEditor()`, which is only available
- * inside tldraw's render tree, so they're mounted via the
- * InFrontOfTheCanvas slot together.
+ * PageChrome — bundles the screen-space page pieces (the right grab
+ * handle + the CSS-var publisher that floats the toolbar + StylePanel
+ * over the page). Both need `useEditor()`, which is only available
+ * inside tldraw's render tree, so they mount via InFrontOfTheCanvas.
  */
 function PageChrome() {
   return (
     <>
-      <ScreenSpaceMask />
+      <PagePositionPublisher />
       <PageEdges />
     </>
   );
 }
 
+/**
+ * ConditionalStylePanel — override tldraw's default StylePanel so it
+ * only renders when at least one shape is selected. CSS in globals.css
+ * pins its position to the top-right of the PAGE (not the viewport)
+ * and below the floating toolbar.
+ */
+function ConditionalStylePanel() {
+  const editor = useEditor();
+  const hasSelection = useValue(
+    "hasSelection",
+    () => editor.getSelectedShapeIds().length > 0,
+    [editor],
+  );
+  if (!hasSelection) return null;
+  return <DefaultStylePanel />;
+}
+
 // Hide tldraw UI elements we don't need; mount the chrome.
 const tlComponents: TLComponents = {
   PageMenu: null,
-  InFrontOfTheCanvas: PageChrome,
+  Background: DeskBackground,          // uniform slate-200 desk
+  OnTheCanvas: PageBackground,         // page on top — white + dot grid
+  InFrontOfTheCanvas: PageChrome,      // grab handle + position publisher
+  StylePanel: ConditionalStylePanel,   // hidden unless shape selected
 };
 
 /**
@@ -426,7 +416,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
 
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
-    editorInstance.updateInstanceState({ isGridMode: true });
+    // Grid is NOT enabled — the page (PageBackground) paints its own dot
+    // grid so grid dots only appear on the page, not on the surrounding
+    // grey desk. Snap-to-grid still works at tldraw's default behavior.
+    editorInstance.updateInstanceState({ isGridMode: false });
     // Apply page constraints immediately. Initial value is the atom's
     // current value, which loadCanvas overrides with the saved width
     // shortly after.
@@ -763,8 +756,9 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         console.error("Failed to load canvas:", err);
       }
 
-      // Always re-enable grid after loading (loadStoreSnapshot can overwrite it)
-      editor.updateInstanceState({ isGridMode: true });
+      // Native grid stays OFF after load (loadStoreSnapshot can flip it).
+      // The page has its own baked-in dot grid via PageBackground.
+      editor.updateInstanceState({ isGridMode: false });
 
       // CRITICAL: only NOW allow saves to fire. Before this point, the
       // tldraw snapshot is empty (just initialized) and would wipe the DB.

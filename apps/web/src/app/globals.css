@@ -19,25 +19,41 @@ body,
   overflow: hidden;
 }
 
-/* tldraw container fills the available area between the surrounding
-   chrome (sidebar on left, floating toolbar on right). The CSS vars are
-   published by Sidebar (--ds-sidebar-w) and CanvasToolbar (--ds-toolbar-w)
-   and update live as those panels collapse/expand. */
+/* tldraw container fills the available area next to the sidebar. The
+   floating toolbar (and the StylePanel when visible) sit ON TOP of the
+   canvas via position: fixed — they do NOT reserve layout space, so the
+   canvas extends all the way to the viewport right edge and the floating
+   UI overlays it. */
 .tldraw-container {
   position: relative;
   width: 100%;
   height: 100%;
 }
 
-/* Inset the tldraw editor itself so its viewport (and therefore the
-   page that fills it) sits between the sidebar and floating toolbar
-   instead of stretching under them. */
+/* Inset the tldraw editor on the LEFT only (after the sidebar). Right
+   edge reaches the viewport edge — toolbar floats on top of it. */
 .tldraw-container > .tl-container {
   position: absolute !important;
   top: 0;
   bottom: 0;
   left: calc(var(--ds-sidebar-w, 0px) + 8px);
-  right: calc(var(--ds-toolbar-w, 0px) + 8px);
+  right: 0 !important;
   width: auto !important;
   height: auto !important;
+
+  /* Override tldraw's native canvas background to the soft "desk" grey
+     so everything OUTSIDE the page looks like a desk under the sheet.
+     The page itself (rendered via OnTheCanvas) paints white on top. */
+  --color-background: #E2E8F0; /* slate-200 */
+}
+
+/* Pin tldraw's StylePanel to the top-right of the PAGE (not viewport).
+   --ds-page-right-x is published by DirectoorCanvas and tracks the page's
+   right edge in screen coords. top:72 keeps it below the floating toolbar
+   (toolbar top=16 + height~48 + gap=8). */
+.tlui-style-panel {
+  position: fixed !important;
+  top: 72px !important;
+  right: calc(100vw - var(--ds-page-right-x, 100vw) + 16px) !important;
+  z-index: 9993;
 }

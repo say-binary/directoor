@@ -56,16 +56,11 @@ export function CanvasToolbar({
     } catch { /* ignore */ }
   }, [collapsed]);
 
-  // Publish current toolbar width as a CSS variable. The mask uses this
-  // to leave a gap on the right side of the page (else it would slide
-  // visually under the toolbar).
-  // Width estimates include 16px right offset (right-4) + visible content.
-  useEffect(() => {
-    // collapsed: 36px chevron pill + 16px offset = 52px
-    // expanded: ~280-360px depending on Share/GIF visibility + 16px offset
-    const w = collapsed ? 52 : 360;
-    document.documentElement.style.setProperty("--ds-toolbar-w", `${w}px`);
-  }, [collapsed, hasAnimation, onShare]);
+  // Toolbar is purely floating — it does NOT reserve layout space.
+  // Position is anchored to the PAGE's right edge via the CSS variable
+  // --ds-page-right-x (published by DirectoorCanvas). This way the
+  // toolbar sits visually inside the white page area, not over the
+  // surrounding grey desk, and canvas width is unaffected by collapse.
 
   const handlePng = async () => {
     if (!editor) return;
@@ -91,10 +86,23 @@ export function CanvasToolbar({
     }
   };
 
+  // Anchor to the PAGE's right edge (not the viewport) via CSS var.
+  // fallback 100vw means "pin to viewport right" until the var is
+  // published (first paint before canvas mount).
+  const floatingStyle: React.CSSProperties = {
+    position: "fixed",
+    top: 16,
+    right: "calc(100vw - var(--ds-page-right-x, 100vw) + 16px)",
+    zIndex: 9994,
+  };
+
   // ─── Collapsed state: tiny chevron pill ─────────────────────────────
   if (collapsed) {
     return (
-      <div className="fixed right-4 top-4 z-[9994] rounded-xl border border-slate-200 bg-white/95 shadow-lg ring-1 ring-slate-900/5 backdrop-blur-sm">
+      <div
+        style={floatingStyle}
+        className="rounded-xl border border-slate-200 bg-white/95 shadow-lg ring-1 ring-slate-900/5 backdrop-blur-sm"
+      >
         <button
           onClick={() => setCollapsed(false)}
           title="Show toolbar"
@@ -108,7 +116,10 @@ export function CanvasToolbar({
 
   // ─── Expanded state: full toolbar ───────────────────────────────────
   return (
-    <div className="fixed right-4 top-4 z-[9994] flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 px-1.5 py-1 shadow-lg ring-1 ring-slate-900/5 backdrop-blur-sm">
+    <div
+      style={floatingStyle}
+      className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 px-1.5 py-1 shadow-lg ring-1 ring-slate-900/5 backdrop-blur-sm"
+    >
       <button
         onClick={() => setCollapsed(true)}
         title="Collapse toolbar"
