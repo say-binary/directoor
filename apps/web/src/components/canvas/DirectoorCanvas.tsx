@@ -50,7 +50,10 @@ function makeCameraOptions(pageWidth: number): TLCameraOptions {
       initialZoom: "fit-x",
       baseZoom: "fit-x",
       bounds: { x: 0, y: 0, w: pageWidth, h: PAGE_HEIGHT },
-      padding: { x: 0, y: 0 },
+      // Non-zero padding so the off-page mask is ALWAYS visible as a
+      // dark-grey margin around the page — gives the user a clear
+      // "page sitting on a desk" Word-doc feel even at fit zoom.
+      padding: { x: 64, y: 0 },
       origin: { x: 0.5, y: 0 },
       behavior: { x: "contain", y: "inside" },
     },
@@ -86,28 +89,21 @@ function rightMostShapeEdge(editor: Editor): number {
  * so we never push existing shapes outside the page (data-integrity rule).
  */
 /**
- * Shared visual style for both page edges. They look identical so the page
- * reads as a clearly-bounded "card" floating on the dark canvas. The right
- * edge is also draggable; the left edge is purely decorative (left is fixed
- * at canvas x=0).
+ * Shared visual style for both page edges. The page sits on a dark-grey
+ * "desk" (the off-page mask), so each edge is a clearly visible dark
+ * vertical line with a soft outer drop-shadow that fades into the desk —
+ * the classic Word-doc page-on-desk look.
  */
-const EDGE_BASE_STYLE = {
-  position: "absolute" as const,
-  top: 0,
-  width: 10,
-  height: "100vh",
-  background:
-    "linear-gradient(90deg, rgba(255,255,255,0.0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0.0) 100%)",
-  zIndex: 100,
-};
+const EDGE_LINE_WIDTH = 2;
+const EDGE_HIT_WIDTH = 12;  // wider invisible hit area for easier drag
 
-const EDGE_RIDGE = {
+const EDGE_LINE_STYLE = {
   position: "absolute" as const,
   top: 0,
-  width: 1,
+  width: EDGE_LINE_WIDTH,
   height: "100vh",
-  background: "rgba(255,255,255,0.85)",
-  boxShadow: "0 0 8px 1px rgba(255,255,255,0.40)",
+  background: "rgba(15, 23, 42, 0.55)", // slate-900 @ 55% — visible on white page
+  zIndex: 100,
 };
 
 /**
@@ -128,12 +124,16 @@ const EDGE_RIDGE = {
 function PageEdges() {
   const editor = useEditor();
   const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
-  const camera = useValue("camera", () => editor.getCamera(), [editor]);
+  // Subscribe to camera so we re-render on any pan/zoom. We don't use
+  // the camera object directly — instead we call editor.pageToScreen()
+  // which correctly accounts for the viewport's screen-space offset
+  // (which our previous manual formula was missing).
+  useValue("camera", () => editor.getCamera(), [editor]);
   const isDraggingRef = useRef(false);
 
-  // Convert canvas X to screen X (InFrontOfTheCanvas is in screen coords).
-  const leftScreenX = (0 - camera.x) * camera.z;
-  const rightScreenX = (pageWidth - camera.x) * camera.z;
+  // Convert canvas X to viewport-screen X via tldraw's own helper.
+  const leftScreenX = editor.pageToScreen({ x: 0, y: 0 }).x;
+  const rightScreenX = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
 
   const onRightPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -169,32 +169,63 @@ function PageEdges() {
 
   return (
     <>
-      {/* LEFT edge — decorative, fixed at canvas x=0 */}
-      <div style={{ ...EDGE_BASE_STYLE, left: leftScreenX - 5, pointerEvents: "none" }}>
-        <div style={{ ...EDGE_RIDGE, left: 4 }} />
-      </div>
+      {/* LEFT edge — solid dark line at canvas x=0, decorative only */}
+      <div
+        style={{
+          ...EDGE_LINE_STYLE,
+          left: leftScreenX - EDGE_LINE_WIDTH / 2,
+          pointerEvents: "none",
+        }}
+      />
 
-      {/* RIGHT edge — draggable, at canvas x=pageWidth */}
+      {/* RIGHT edge — solid dark line at canvas x=pageWidth */}
+      <div
+        style={{
+          ...EDGE_LINE_STYLE,
+          left: rightScreenX - EDGE_LINE_WIDTH / 2,
+          pointerEvents: "none",
+        }}
+      />
+
+      {/* RIGHT edge invisible hit area — wider than the visible line so
+          the user can grab it easily. Cursor changes to ew-resize on hover. */}
       <div
         onPointerDown={onRightPointerDown}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background =
-            "linear-gradient(90deg, rgba(59,130,246,0.0) 0%, rgba(59,130,246,0.55) 50%, rgba(59,130,246,0.0) 100%)";
+          (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "1";
         }}
         onMouseLeave={(e) => {
           if (!isDraggingRef.current) {
-            e.currentTarget.style.background = EDGE_BASE_STYLE.background;
+            (e.currentTarget.firstElementChild as HTMLElement).style.opacity = "0";
           }
         }}
         title="Drag to resize the page"
         style={{
-          ...EDGE_BASE_STYLE,
-          left: rightScreenX - 5,
+          position: "absolute",
+          top: 0,
+          left: rightScreenX - EDGE_HIT_WIDTH / 2,
+          width: EDGE_HIT_WIDTH,
+          height: "100vh",
           cursor: "ew-resize",
+          zIndex: 101,
           pointerEvents: "all",
+          background: "transparent",
         }}
       >
-        <div style={{ ...EDGE_RIDGE, left: 4 }} />
+        {/* Hover indicator: a brighter blue line that fades in on hover */}
+        <div
+          style={{
+            position: "absolute",
+            left: (EDGE_HIT_WIDTH - 4) / 2,
+            top: 0,
+            width: 4,
+            height: "100vh",
+            background: "rgba(59, 130, 246, 0.85)",
+            opacity: 0,
+            transition: "opacity 120ms ease",
+            pointerEvents: "none",
+          }}
+        />
       </div>
     </>
   );
