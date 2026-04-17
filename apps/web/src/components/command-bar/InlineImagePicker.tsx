@@ -6,7 +6,6 @@ import type { Editor } from "tldraw";
 import { createShapeId } from "tldraw";
 import { useImageLibrary, type LibraryImage } from "@/lib/image-library";
 import { apiFetch } from "@/lib/api-client";
-import { FeedbackBar } from "./FeedbackBar";
 
 export interface ImageHit {
   id: string;
@@ -52,7 +51,6 @@ export function InlineImagePicker({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [logId, setLogId] = useState<string | null>(null);
   const [picked, setPicked] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const addToLibrary = useImageLibrary((s) => s.addMany);
@@ -70,7 +68,6 @@ export function InlineImagePicker({
         });
         const data = (await res.json()) as { results?: ImageHit[]; error?: string; logId?: string };
         if (cancelled) return;
-        if (data.logId) setLogId(data.logId);
         if (!res.ok || data.error) {
           setError(data.error ?? `Search failed (${res.status})`);
           setResults([]);
@@ -189,8 +186,9 @@ export function InlineImagePicker({
     }));
     addToLibrary(libEntries);
 
+    // Flash "Added ✓" for 800ms then close — fast, clean UX
     setPicked(true);
-    // Don't auto-close — keep open for thumbs-up/down feedback
+    setTimeout(onClose, 800);
   };
 
   // Position the picker beneath the click point, clamped to viewport
@@ -269,13 +267,6 @@ export function InlineImagePicker({
                 {picked ? "Added" : `Add ${selected.size > 0 ? `(${selected.size})` : ""}`}
               </button>
             </div>
-            {picked && logId && (
-              <FeedbackBar
-                logId={logId}
-                onDone={onClose}
-                className="mt-3"
-              />
-            )}
           </>
         )}
       </div>

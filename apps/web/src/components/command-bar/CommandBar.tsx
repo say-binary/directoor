@@ -364,7 +364,7 @@ export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateH
           setIsOpen(true);
           setTimeout(() => inputRef.current?.focus(), 50);
         }}
-        className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm text-white shadow-lg transition-all hover:bg-slate-800 hover:shadow-xl"
+        className="fixed bottom-[64px] left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm text-white shadow-lg transition-all hover:bg-slate-800 hover:shadow-xl"
       >
         <Command size={16} />
         <span>Command</span>
@@ -379,7 +379,7 @@ export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateH
   }
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] w-full max-w-2xl px-4">
+    <div className="fixed bottom-[64px] left-1/2 -translate-x-1/2 z-[9999] w-full max-w-2xl px-4">
       <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-2xl ring-1 ring-slate-900/5">
         <Command size={18} className="shrink-0 text-slate-400" />
         <input

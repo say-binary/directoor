@@ -78,7 +78,9 @@ export async function POST(request: NextRequest) {
     const url = new URL("https://api.openverse.org/v1/images/");
     url.searchParams.set("q", query);
     url.searchParams.set("page_size", String(PAGE_SIZE));
-    // Bias toward higher-quality landscape-friendly results
+    // Request only large images — filters out tiny thumbnails and low-res
+    // CC photos, dramatically improving visual quality on canvas.
+    url.searchParams.set("size", "large");
     url.searchParams.set("mature", "false");
 
     const response = await fetch(url.toString(), {

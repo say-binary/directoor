@@ -221,9 +221,11 @@ export function InlineCommand({
     );
   }
 
-  // Position: centered on click point, clamped to viewport
+  // Position: centered on click point, clamped to viewport.
+  // Reserve 200px from the bottom so the FeedbackBar + status lines stay visible,
+  // and an extra 64px gap above tldraw's bottom toolbar.
   const left = Math.max(16, Math.min(screenPosition.x - 280, window.innerWidth - 580));
-  const top = Math.min(screenPosition.y + 12, window.innerHeight - 100);
+  const top = Math.min(screenPosition.y + 12, window.innerHeight - 264);
 
   return (
     <div className="fixed z-[9999]" style={{ left, top }}>
