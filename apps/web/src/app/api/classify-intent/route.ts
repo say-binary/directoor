@@ -38,6 +38,13 @@ const TEXT_PATTERNS: RegExp[] = [
 ];
 
 const IMAGE_PATTERNS: RegExp[] = [
+  // EXPLICIT trailing image noun — wins over diagram/architecture topics.
+  // Catches "microservices architecture diagram image", "kafka consumer photo",
+  // "neural network picture". User said the magic word — honour it.
+  /\b(image|photo|picture|pic|illustration|photograph)s?\s*$/i,
+  // "an image of X" / "the photo of X" — explicit prepositional form
+  /\b(an?|the|some)\s+(image|photo|picture|pic|illustration|photograph)s?\s+of\b/i,
+  // Verb-led: "show me image of cats", "find a photo of"
   /\b(image|photo|picture|pic|illustration|photograph)s?\s+(of|for|showing)\b/i,
   /\b(find|fetch|get|show|search)\s+(me\s+)?(a\s+|an\s+|some\s+)?(image|photo|picture|pic|illustration|photograph)s?\b/i,
   /^(image|photo|picture|pic)s?\s*[:\-]/i,
@@ -65,7 +72,9 @@ const CLASSIFY_SYSTEM = `Classify the user's query into exactly one of three mod
 - text:    prose, paragraph, tagline, caption, heading, description, quote
 - image:   photograph, illustration, picture from the web
 
-Default to "diagram" for anything about technical systems or components. Default to "text" for anything describing what words or prose to generate. Default to "image" only when the user clearly wants a picture.
+CRITICAL: If the user explicitly mentions the words "image", "photo", "picture", "illustration", or "photograph" anywhere in the query, classify as "image" — even if the topic sounds technical (e.g. "microservices architecture diagram image" → image, because the user wants a picture of one).
+
+Otherwise: default to "diagram" for technical systems/components, "text" for prose generation requests.
 
 Reply with exactly one word: diagram, text, or image. No punctuation, no explanation.`;
 

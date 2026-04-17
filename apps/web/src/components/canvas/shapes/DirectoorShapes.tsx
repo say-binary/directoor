@@ -961,7 +961,11 @@ export class DirectoorImageShapeUtil extends BaseBoxShapeUtil<DirectoorImageShap
               style={{
                 width: "100%",
                 height: "100%",
-                objectFit: "cover",
+                // "contain" preserves the full image and letterboxes empty
+                // space against the container's grey background. The user
+                // never loses content on resize — opposite of "cover" which
+                // crops to fill.
+                objectFit: "contain",
                 display: "block",
                 userSelect: "none",
                 pointerEvents: "none",
