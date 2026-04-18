@@ -30,44 +30,232 @@ import {
   useEditor,
   useValue,
   stopEventPropagation,
+  DefaultColorStyle,
+  DefaultFillStyle,
+  DefaultDashStyle,
+  type TLDefaultColorStyle,
+  type TLDefaultFillStyle,
+  type TLDefaultDashStyle,
 } from "tldraw";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 // ─── Shared shape props ──────────────────────────────────────────────
+//
+// Directoor geometric shapes now use tldraw's STANDARD style properties
+// (DefaultColorStyle, DefaultFillStyle, DefaultDashStyle). Because these
+// are declared as style props, tldraw's built-in DefaultStylePanel
+// automatically renders the exact same UI you get for native tldraw
+// shapes — color swatches, fill toggle, dash selector — with no extra
+// code. The rendering layer maps the color-enum name + fill-enum into
+// actual stroke/fill hex values via resolveShapeColors() below.
+//
+// Dash: we don't use tldraw's "draw" style (which looks sketched).
+// "solid"/"dashed"/"dotted" still flow through and render as real SVG
+// dashes so diagrams stay crisp.
 
 interface DirectoorShapeProps {
   w: number;
   h: number;
   label: string;
-  /** Stroke color as hex, e.g. "#3B82F6" */
-  color: string;
-  /** Fill color as hex, e.g. "#EFF6FF" */
-  fill: string;
-  /** Optional dash style */
-  dash: "solid" | "dashed" | "dotted";
+  color: TLDefaultColorStyle;
+  fill: TLDefaultFillStyle;
+  dash: TLDefaultDashStyle;
 }
 
 const sharedProps: RecordProps<TLBaseShape<string, DirectoorShapeProps>> = {
   w: T.number,
   h: T.number,
   label: T.string,
-  color: T.string,
-  fill: T.string,
-  dash: T.literalEnum("solid", "dashed", "dotted"),
+  color: DefaultColorStyle,
+  fill: DefaultFillStyle,
+  dash: DefaultDashStyle,
 };
 
 const defaultProps: DirectoorShapeProps = {
   w: 140,
   h: 80,
   label: "",
-  color: "#334155",
-  fill: "#FFFFFF",
+  color: "grey",
+  fill: "none",
   dash: "solid",
 };
+
+// ─── Color / fill resolver ──────────────────────────────────────────
+// Tldraw's color names → the actual hex Directoor has always rendered.
+// Keeping our palette intentionally means existing diagrams look
+// unchanged (same blues, greens, etc.) while the UI gains the native
+// style panel.
+const TL_COLOR_HEX: Record<TLDefaultColorStyle, string> = {
+  black: "#0F172A",
+  grey: "#334155",
+  "light-violet": "#A78BFA",
+  violet: "#7C3AED",
+  blue: "#3B82F6",
+  "light-blue": "#0EA5E9",
+  yellow: "#EAB308",
+  orange: "#D97706",
+  green: "#16A34A",
+  "light-green": "#84CC16",
+  "light-red": "#F472B6",
+  red: "#E11D48",
+  white: "#FFFFFF",
+};
+
+// Paler fill variant used when fill === "solid" on light-weight shapes,
+// so text stays readable on the tinted background.
+const TL_FILL_HEX: Record<TLDefaultColorStyle, string> = {
+  black: "#F1F5F9",
+  grey: "#F8FAFC",
+  "light-violet": "#F5F3FF",
+  violet: "#F5F3FF",
+  blue: "#EFF6FF",
+  "light-blue": "#F0F9FF",
+  yellow: "#FEFCE8",
+  orange: "#FEF3C7",
+  green: "#F0FDF4",
+  "light-green": "#F7FEE7",
+  "light-red": "#FDF2F8",
+  red: "#FFF1F2",
+  white: "#FFFFFF",
+};
+
+/**
+ * Resolve the enum-based `color` + `fill` props to concrete hex values
+ * for SVG rendering. Fill enum values:
+ *   - "none"    → transparent (unfilled outline)
+ *   - "semi"    → 30% tint of the stroke colour
+ *   - "solid"   → full pale fill (Directoor's traditional look)
+ *   - "pattern" → hatch-style; we treat it like "semi" for simplicity
+ */
+export function resolveShapeColors(
+  color: TLDefaultColorStyle,
+  fill: TLDefaultFillStyle,
+): { stroke: string; fill: string } {
+  const stroke = TL_COLOR_HEX[color] ?? TL_COLOR_HEX.grey;
+  if (fill === "none") return { stroke, fill: "transparent" };
+  if (fill === "solid") return { stroke, fill: TL_FILL_HEX[color] ?? TL_FILL_HEX.white };
+  // "semi" / "pattern" → translucent tint of the stroke
+  return { stroke, fill: `${stroke}33` };
+}
+
+// ─── Legacy-value normalisers ───────────────────────────────────────
+// Old canvases + old LLM output + old sidebar drops all used hex strings
+// for color/fill and "solid"|"dashed"|"dotted" for dash. These helpers
+// snap any legacy value into the matching tldraw enum so the new-style
+// props (DefaultColorStyle etc.) validate cleanly.
+
+const HEX_TO_TL_COLOR: Record<string, TLDefaultColorStyle> = {
+  "#0F172A": "black",
+  "#000000": "black",
+  "#334155": "grey",
+  "#475569": "grey",
+  "#64748B": "grey",
+  "#94A3B8": "grey",
+  "#CBD5E1": "grey",
+  "#3B82F6": "blue",
+  "#1D4ED8": "blue",
+  "#2563EB": "blue",
+  "#0EA5E9": "light-blue",
+  "#38BDF8": "light-blue",
+  "#16A34A": "green",
+  "#22C55E": "green",
+  "#10B981": "green",
+  "#84CC16": "light-green",
+  "#A3E635": "light-green",
+  "#D97706": "orange",
+  "#F59E0B": "orange",
+  "#EAB308": "yellow",
+  "#FACC15": "yellow",
+  "#E11D48": "red",
+  "#DC2626": "red",
+  "#EF4444": "red",
+  "#F472B6": "light-red",
+  "#EC4899": "light-red",
+  "#7C3AED": "violet",
+  "#6D28D9": "violet",
+  "#8B5CF6": "violet",
+  "#A78BFA": "light-violet",
+  "#C4B5FD": "light-violet",
+  "#FFFFFF": "white",
+};
+
+/** Convert any hex string to the closest tldraw color name. */
+export function hexToTldrawColor(input: string | undefined): TLDefaultColorStyle {
+  if (!input) return "grey";
+  const upper = input.toUpperCase();
+  return HEX_TO_TL_COLOR[upper] ?? "grey";
+}
+
+/** Convert a legacy fill hex to the right DefaultFillStyle enum value. */
+export function fillFromLegacy(input: string | undefined): TLDefaultFillStyle {
+  if (!input) return "none";
+  const upper = input.toUpperCase();
+  if (upper === "TRANSPARENT" || upper === "NONE" || upper === "#FFFFFF") return "none";
+  return "solid";
+}
+
+/**
+ * Snap any directoor-geo or directoor-arrow shape's color/fill/dash props
+ * into tldraw's enum world if they still hold legacy values. Safe no-op
+ * if they're already enum values. Used by a before-create + before-change
+ * side-effect handler so sidebar drops, LLM-generated shapes, and
+ * snapshot loads all normalise on the way in.
+ */
+const DIRECTOOR_STYLED_TYPES = new Set([
+  "directoor-rectangle",
+  "directoor-hexagon",
+  "directoor-cylinder",
+  "directoor-circle",
+  "directoor-diamond",
+  "directoor-pill",
+  "directoor-layer",
+  "directoor-actor",
+  "directoor-cloud",
+  "directoor-document",
+  "directoor-stack",
+  "directoor-arrow",
+]);
+
+const VALID_TL_COLORS = new Set<TLDefaultColorStyle>([
+  "black", "grey", "light-violet", "violet", "blue", "light-blue",
+  "yellow", "orange", "green", "light-green", "light-red", "red", "white",
+]);
+const VALID_TL_FILLS = new Set<TLDefaultFillStyle>(["none", "semi", "solid", "pattern"]);
+const VALID_TL_DASHES = new Set<TLDefaultDashStyle>(["draw", "solid", "dashed", "dotted"]);
+
+export function normalizeDirectoorShapeStyles<T extends { type: string; props?: object }>(
+  shape: T,
+): T {
+  if (!DIRECTOOR_STYLED_TYPES.has(shape.type)) return shape;
+  const props = shape.props as Record<string, unknown> | undefined;
+  if (!props) return shape;
+
+  let changed = false;
+  const next: Record<string, unknown> = { ...props };
+
+  // color: hex → tldraw color name
+  if (typeof props.color === "string" && !VALID_TL_COLORS.has(props.color as TLDefaultColorStyle)) {
+    next.color = hexToTldrawColor(props.color);
+    changed = true;
+  }
+  // fill: hex → fill enum (only for shapes that have a fill prop)
+  if ("fill" in props && typeof props.fill === "string" && !VALID_TL_FILLS.has(props.fill as TLDefaultFillStyle)) {
+    next.fill = fillFromLegacy(props.fill);
+    changed = true;
+  }
+  // dash: keep solid/dashed/dotted, map unknowns to "solid"
+  if (typeof props.dash === "string" && !VALID_TL_DASHES.has(props.dash as TLDefaultDashStyle)) {
+    next.dash = "solid";
+    changed = true;
+  }
+
+  return changed ? { ...shape, props: next as T["props"] } : shape;
+}
 
 function strokeDashArray(dash: DirectoorShapeProps["dash"]): string {
   if (dash === "dashed") return "8,4";
   if (dash === "dotted") return "2,3";
+  if (dash === "draw") return "0"; // treat tldraw's sketchy "draw" as solid
   return "0";
 }
 
@@ -357,7 +545,8 @@ export class DirectoorCylinderShapeUtil extends BaseBoxShapeUtil<DirectoorCylind
   }
 
   override component(shape: DirectoorCylinderShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const ellipseRY = Math.min(h * 0.12, 18);
     const dashArray = strokeDashArray(dash);
 
@@ -415,7 +604,8 @@ export class DirectoorHexagonShapeUtil extends BaseBoxShapeUtil<DirectoorHexagon
   }
 
   override component(shape: DirectoorHexagonShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const inset = w * 0.18;
     const points = [
@@ -470,7 +660,8 @@ export class DirectoorActorShapeUtil extends BaseBoxShapeUtil<DirectoorActorShap
   }
 
   override component(shape: DirectoorActorShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const headR = Math.min(w * 0.18, h * 0.18);
     const headCY = headR + 6;
@@ -526,7 +717,8 @@ export class DirectoorCloudShapeUtil extends BaseBoxShapeUtil<DirectoorCloudShap
   }
 
   override component(shape: DirectoorCloudShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     // A scalable "cloud" path: combination of arcs forming a fluffy outline
     const path = `
@@ -574,7 +766,8 @@ export class DirectoorDocumentShapeUtil extends BaseBoxShapeUtil<DirectoorDocume
   }
 
   override component(shape: DirectoorDocumentShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const fold = Math.min(w * 0.25, 24);
 
@@ -642,7 +835,8 @@ export class DirectoorStackShapeUtil extends BaseBoxShapeUtil<DirectoorStackShap
   }
 
   override component(shape: DirectoorStackShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const offset = 6;
     const layers = 3;
@@ -708,7 +902,8 @@ export class DirectoorRectangleShapeUtil extends BaseBoxShapeUtil<DirectoorRecta
   }
 
   override component(shape: DirectoorRectangleShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
@@ -745,7 +940,8 @@ export class DirectoorCircleShapeUtil extends BaseBoxShapeUtil<DirectoorCircleSh
   }
 
   override component(shape: DirectoorCircleShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
@@ -782,7 +978,8 @@ export class DirectoorDiamondShapeUtil extends BaseBoxShapeUtil<DirectoorDiamond
   }
 
   override component(shape: DirectoorDiamondShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
@@ -819,7 +1016,8 @@ export class DirectoorPillShapeUtil extends BaseBoxShapeUtil<DirectoorPillShape>
   }
 
   override component(shape: DirectoorPillShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const radius = Math.min(h / 2, 999);
     return (
@@ -857,7 +1055,8 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
   }
 
   override component(shape: DirectoorLayerShape) {
-    const { w, h, label, color, fill, dash } = shape.props;
+    const { w, h, label, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const stripeCount = 4;
     const stripeGap = (h - 12) / stripeCount;
@@ -1590,9 +1789,12 @@ interface DirectoorArrowProps {
   toShapeId: string;
   fromAnchor: "top" | "right" | "bottom" | "left" | "auto";
   toAnchor: "top" | "right" | "bottom" | "left" | "auto";
-  color: string;
+  /** Stroke colour using tldraw's standard color enum. Rendered via
+   *  TL_COLOR_HEX in the draw code. Declared as a style prop so tldraw's
+   *  DefaultStylePanel surfaces it when arrows are selected. */
+  color: TLDefaultColorStyle;
   strokeWidth: number;
-  dash: "solid" | "dashed" | "dotted";
+  dash: TLDefaultDashStyle;
   startHead: "none" | "arrow";
   endHead: "none" | "arrow";
   path: "straight" | "elbow";
@@ -1610,9 +1812,9 @@ const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps
   toShapeId: T.string,
   fromAnchor: T.literalEnum("top", "right", "bottom", "left", "auto"),
   toAnchor: T.literalEnum("top", "right", "bottom", "left", "auto"),
-  color: T.string,
+  color: DefaultColorStyle,
   strokeWidth: T.number,
-  dash: T.literalEnum("solid", "dashed", "dotted"),
+  dash: DefaultDashStyle,
   startHead: T.literalEnum("none", "arrow"),
   endHead: T.literalEnum("none", "arrow"),
   path: T.literalEnum("straight", "elbow"),
@@ -1624,7 +1826,7 @@ const arrowDefaults: DirectoorArrowProps = {
   startX: 0, startY: 0, endX: 200, endY: 0,
   fromShapeId: "", toShapeId: "",
   fromAnchor: "auto", toAnchor: "auto",
-  color: "#334155",
+  color: "grey",
   strokeWidth: 2,
   dash: "solid",
   startHead: "none",
@@ -1757,7 +1959,8 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
  * when either endpoint shape moves.
  */
 function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUtil; shape: DirectoorArrowShape }) {
-  const { color, strokeWidth, dash, startHead, endHead, path } = shape.props;
+  const { strokeWidth, dash, startHead, endHead, path } = shape.props;
+  const color = TL_COLOR_HEX[shape.props.color] ?? TL_COLOR_HEX.grey;
   const dashArray = strokeDashArray(dash);
 
   // useValue subscribes to ALL relevant atoms (shape props + bound shape positions),

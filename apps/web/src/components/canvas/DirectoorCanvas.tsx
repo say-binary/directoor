@@ -5,8 +5,7 @@ import {
   Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions, TLShape,
   atom, useValue, useEditor, DefaultStylePanel,
 } from "tldraw";
-import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
-import { DirectoorStylePanel } from "./DirectoorStylePanel";
+import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles } from "./shapes/DirectoorShapes";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -310,47 +309,24 @@ function PageChrome() {
 }
 
 /**
- * ConditionalStylePanel — override tldraw's default StylePanel so it
- * only renders when at least one shape is selected, and picks the right
- * panel based on what's selected:
+ * ConditionalStylePanel — renders tldraw's DefaultStylePanel only when
+ * at least one shape is selected. Because our Directoor shapes now
+ * declare their style props (color/fill/dash) using tldraw's standard
+ * DefaultColorStyle / DefaultFillStyle / DefaultDashStyle, the same
+ * DefaultStylePanel works for both tldraw's native shapes AND our
+ * custom shapes — exact same UI, no custom component needed.
  *
- *  - Any Directoor custom shape (has `color`/`fill`/`dash` props)
- *      → DirectoorStylePanel (stroke / fill / dash)
- *  - Otherwise (pure tldraw shapes)
- *      → DefaultStylePanel (tldraw's built-in styles)
- *
- * CSS in globals.css pins this panel to the top-right of the PAGE (not
- * the viewport) and below the floating toolbar.
+ * CSS in globals.css pins this panel to the top-right of the PAGE
+ * (not the viewport) and below the floating toolbar.
  */
 function ConditionalStylePanel() {
   const editor = useEditor();
-  const selectionInfo = useValue(
-    "selectionInfo",
-    () => {
-      const ids = editor.getSelectedShapeIds();
-      let hasDirectoor = false;
-      let hasAny = false;
-      for (const id of ids) {
-        const s = editor.getShape(id);
-        if (!s) continue;
-        hasAny = true;
-        const props = s.props as { color?: string; fill?: string; dash?: string } | undefined;
-        if (
-          props &&
-          (typeof props.color === "string" ||
-            typeof props.fill === "string" ||
-            typeof props.dash === "string")
-        ) {
-          hasDirectoor = true;
-          break; // one is enough to switch panel
-        }
-      }
-      return { hasAny, hasDirectoor };
-    },
+  const hasSelection = useValue(
+    "hasSelection",
+    () => editor.getSelectedShapeIds().length > 0,
     [editor],
   );
-  if (!selectionInfo.hasAny) return null;
-  if (selectionInfo.hasDirectoor) return <DirectoorStylePanel />;
+  if (!hasSelection) return null;
   return <DefaultStylePanel />;
 }
 
@@ -525,8 +501,18 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         : { ...s, x, y };
     };
 
-    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => clampShape(s));
-    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => clampShape(next));
+    // Normalize legacy-hex color/fill/dash into tldraw's enum before we
+    // clamp position — this way shapes from old saves / LLM / sidebar
+    // with hex strings get snapped to valid style enum values (e.g.
+    // "#3B82F6" → "blue"). Safe no-op if the shape isn't one of ours or
+    // the props are already enum-shaped.
+    const normalizeAndClamp = (s: TLShape): TLShape => {
+      const normalized = normalizeDirectoorShapeStyles(s) as TLShape;
+      return clampShape(normalized);
+    };
+
+    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => normalizeAndClamp(s));
+    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndClamp(next));
     // After-change backstop. If somehow a shape landed off-page despite
     // the before-handlers, force-correct it. Skip if the before-clamp
     // already fixed it (cheap shallow check).
