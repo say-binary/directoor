@@ -317,9 +317,18 @@ function PageChrome() {
  * Only appears when at least one selected shape has a `labelColor` prop
  * (i.e. is a Directoor geo shape — not an arrow, image, or text shape).
  */
+// Order + grouping matches tldraw's DefaultStylePanel color swatches exactly
+// so the "Text color" row feels consistent with the one above it:
+//   Row 1: black, grey, light-violet, violet
+//   Row 2: blue, light-blue, yellow, orange
+//   Row 3: green, light-green, light-red, red
+// White is appended last (tldraw lists it separately via a dedicated toggle
+// but we inline it so the user can also pick a light/inverted text colour).
 const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
-  "black", "grey", "blue", "light-blue", "green", "light-green",
-  "red", "light-red", "violet", "light-violet", "orange", "yellow", "white",
+  "black", "grey", "light-violet", "violet",
+  "blue", "light-blue", "yellow", "orange",
+  "green", "light-green", "light-red", "red",
+  "white",
 ];
 
 function LabelColorPicker() {
@@ -389,35 +398,52 @@ function LabelColorPicker() {
         padding: "6px 8px",
         display: "flex",
         flexDirection: "column",
-        gap: 4,
-        minWidth: 148,
+        gap: 6,
+        minWidth: 156,
+        // CRITICAL: tldraw's StylePanel slot container has pointer-events:none
+        // so clicks on the surrounding grey area pass through to the canvas.
+        // We need to re-enable pointer events on this panel so its buttons
+        // actually receive clicks.
+        pointerEvents: "all",
       }}
     >
       <div style={{ fontSize: 10, fontWeight: 600, color: "#64748B", letterSpacing: "0.05em", textTransform: "uppercase" }}>
         Text color
       </div>
-      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+      {/* 4-column grid matches the tldraw DefaultStylePanel color picker
+          above (black, grey, light-violet, violet / blue, light-blue, …).
+          The 13th option (white) wraps onto a row of its own. */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 6,
+          justifyItems: "center",
+        }}
+      >
         {LABEL_COLOR_OPTIONS.map((c) => {
           const isActive = labelColor === c;
           return (
             <button
               key={c}
+              type="button"
               title={c}
               onClick={() => setColor(c)}
               style={{
-                width: 20,
-                height: 20,
-                borderRadius: 4,
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
                 background: TL_COLOR_HEX[c] ?? "#0F172A",
                 border: isActive
                   ? "2px solid #3b82f6"
                   : c === "white"
                     ? "1px solid #CBD5E1"
-                    : "1px solid rgba(0,0,0,0.12)",
+                    : "1px solid rgba(0,0,0,0.08)",
                 cursor: "pointer",
                 outline: "none",
                 flexShrink: 0,
                 boxSizing: "border-box",
+                padding: 0,
               }}
             />
           );
