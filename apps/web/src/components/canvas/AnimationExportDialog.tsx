@@ -9,6 +9,9 @@ import { exportRegionAsGif, exportRegionAsWebm, exportRegionAsSlides } from "@/l
 interface AnimationExportDialogProps {
   editor: Editor;
   regions: AnimationRegionData[];
+  /** Optional: preselect a specific region in the dropdown (used when
+   *  the dialog is opened from the per-region Export button). */
+  initialRegionId?: string | null;
   onClose: () => void;
 }
 
@@ -21,8 +24,13 @@ interface AnimationExportDialogProps {
  * canvas — it ships in every evergreen browser and produces small files
  * suitable for Slack uploads.
  */
-export function AnimationExportDialog({ editor, regions, onClose }: AnimationExportDialogProps) {
-  const [regionId, setRegionId] = useState<string | null>(regions[0]?.id ?? null);
+export function AnimationExportDialog({ editor, regions, initialRegionId, onClose }: AnimationExportDialogProps) {
+  const [regionId, setRegionId] = useState<string | null>(() => {
+    if (initialRegionId && regions.some((r) => r.id === initialRegionId)) {
+      return initialRegionId;
+    }
+    return regions[0]?.id ?? null;
+  });
   const [format, setFormat] = useState<"gif" | "webm" | "slides">("gif");
   const [stepDuration, setStepDuration] = useState(800);
   const [loop, setLoop] = useState(true);
@@ -142,7 +150,7 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
             </div>
             {format === "slides" && (
               <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
-                Downloads an HTML file. Open in any browser and use <kbd className="rounded bg-slate-200 px-1 font-mono">→</kbd> / <kbd className="rounded bg-slate-200 px-1 font-mono">←</kbd> to step through frames. Import the frames into PowerPoint via <em>Insert → Photo Album</em>.
+                Self-contained HTML with full playback: <kbd className="rounded bg-slate-200 px-1 font-mono">→</kbd>/<kbd className="rounded bg-slate-200 px-1 font-mono">←</kbd> step, <kbd className="rounded bg-slate-200 px-1 font-mono">Space</kbd> play/pause, <kbd className="rounded bg-slate-200 px-1 font-mono">L</kbd> toggle loop. Works offline in any browser and can be dropped into Slack/Notion/email as a single attachment.
               </p>
             )}
 

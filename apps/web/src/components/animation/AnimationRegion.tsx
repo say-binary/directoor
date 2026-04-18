@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, type KeyboardEvent } from "react";
-import { Play, Square, ChevronRight, Repeat, Sparkles, X, Check } from "lucide-react";
+import { Play, Square, ChevronRight, Repeat, Sparkles, X, Check, Download } from "lucide-react";
 import type { Editor, TLShapeId } from "tldraw";
 
 export interface AnimationRegionData {
@@ -24,9 +24,12 @@ interface AnimationRegionProps {
   /** Callback to make this region the active one when the user interacts
    *  with its controls (step, play, etc.). */
   onActivate: () => void;
+  /** Callback when the user clicks the per-region Export shortcut.
+   *  Opens the global export dialog pre-selected to this region. */
+  onExport: () => void;
 }
 
-export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, onActivate }: AnimationRegionProps) {
+export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, onActivate, onExport }: AnimationRegionProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentStep, setCurrentStep] = useState(-1);
   const [sequenceInput, setSequenceInput] = useState(region.sequence.join(","));
@@ -487,6 +490,17 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, 
         {/* Step counter */}
         {currentStep > 0 && (
           <span className="text-xs text-slate-400">{currentStep}/{region.sequence.length}</span>
+        )}
+
+        {/* Export (only when a sequence exists and we're not in edit mode) */}
+        {hasSequence && !region.isEditMode && (
+          <button
+            onClick={() => { onActivate(); onExport(); }}
+            className="rounded-lg bg-slate-100 p-1.5 text-slate-600 hover:bg-blue-100 hover:text-blue-600 transition-colors"
+            title="Export this animation (GIF / WebM / HTML slideshow)"
+          >
+            <Download size={12} />
+          </button>
         )}
 
         {/* Delete */}

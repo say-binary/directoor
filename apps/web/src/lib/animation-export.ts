@@ -202,23 +202,28 @@ export async function exportRegionAsWebm(
 }
 
 /**
- * exportRegionAsSlides — exports each animation step as a self-contained
- * HTML slideshow file that supports arrow-key navigation.
+ * exportRegionAsSlides — exports ONE animation region as a
+ * self-contained HTML slideshow whose playback mirrors the canvas:
+ *   • Arrow-key navigation (→ next, ← prev)
+ *   • Space / Play button: auto-advance at the exported step duration
+ *   • Loop toggle (initial state from the export dialog, changeable live)
+ *   • Click the slide to advance
  *
- * The HTML file embeds all frames as base64 data-URIs, so it works
- * offline and can be opened in any browser. Pressing the right arrow
- * key (or clicking) advances to the next frame — identical behaviour
- * to presenting a PowerPoint deck in Slide Show mode.
+ * The file embeds every captured frame as a base64 PNG data-URI, so
+ * it works offline. Only the selected region's shapes are captured
+ * (see captureFrames — it calls editor.toImage(region.shapeIds…)),
+ * so the output is cleanly cropped to that region.
  *
- * The user can also import the individual slide images into PowerPoint:
- *   Insert → Photo Album → add each PNG as a new slide.
+ * Individual frames can also be extracted from the HTML and imported
+ * into PowerPoint via Insert → Photo Album, if slide-deck workflow
+ * is preferred over live HTML playback.
  */
 export async function exportRegionAsSlides(
   editor: Editor,
   region: AnimationRegionData,
   opts: ExportOptions,
 ): Promise<void> {
-  const { bitmaps, widthPx, heightPx } = await captureFrames(editor, region, opts);
+  const { bitmaps, widthPx, heightPx, frameDelayMs } = await captureFrames(editor, region, opts);
 
   // Convert each ImageBitmap → PNG data-URI (for embedding in HTML)
   const offscreen = new OffscreenCanvas(widthPx, heightPx);
@@ -239,73 +244,201 @@ export async function exportRegionAsSlides(
     opts.onProgress?.((i + 1) / bitmaps.length);
   }
 
-  // Build a minimal self-contained HTML slideshow
   const total = dataUrls.length;
   const slidesJson = JSON.stringify(dataUrls);
+  const initialLoop = opts.loop ? "true" : "false";
+  // Step duration for auto-play — reuse the same delay the GIF/WebM
+  // exports use so the three formats are perceptually identical.
+  const stepMs = Math.max(100, Math.round(frameDelayMs));
+
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Directoor Animation (${total} steps)</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     background: #1e293b;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
-    font-family: system-ui, sans-serif;
-    color: #94a3b8;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: #cbd5e1;
     user-select: none;
+    padding: 24px;
+  }
+  #stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
   }
   #slide {
-    max-width: 95vw;
-    max-height: 85vh;
+    max-width: 100%;
+    max-height: calc(100vh - 160px);
     object-fit: contain;
     border-radius: 8px;
     box-shadow: 0 8px 40px rgba(0,0,0,0.5);
     cursor: pointer;
+    background: #fff;
   }
+  #controls {
+    margin-top: 24px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(15, 23, 42, 0.92);
+    padding: 8px 12px;
+    border-radius: 999px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  }
+  #controls button {
+    background: transparent;
+    border: none;
+    color: #cbd5e1;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 15px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 120ms, color 120ms;
+  }
+  #controls button:hover { background: rgba(255,255,255,0.08); color: #fff; }
+  #controls button.active { color: #60a5fa; background: rgba(96,165,250,0.16); }
+  #playBtn.playing { color: #60a5fa; }
   #counter {
-    margin-top: 16px;
-    font-size: 13px;
+    padding: 0 10px;
+    font-size: 12px;
     letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    color: #94a3b8;
   }
   #hint {
-    margin-top: 6px;
+    margin-top: 10px;
     font-size: 11px;
     opacity: 0.55;
+    text-align: center;
+  }
+  kbd {
+    background: rgba(255,255,255,0.08);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
   }
 </style>
 </head>
 <body>
-<img id="slide" src="" alt="Animation slide" />
-<div id="counter"></div>
-<div id="hint">Click or press → to advance · ← to go back</div>
+<div id="stage"><img id="slide" alt="Animation slide" /></div>
+<div id="controls">
+  <button id="prevBtn" title="Previous (←)" aria-label="Previous">&#9664;&#9664;</button>
+  <button id="playBtn" title="Play / Pause (Space)" aria-label="Play">&#9654;</button>
+  <button id="nextBtn" title="Next (→)" aria-label="Next">&#9654;&#9654;</button>
+  <span id="counter">1 / ${total}</span>
+  <button id="loopBtn" title="Toggle loop (L)" aria-label="Toggle loop">&#8635;</button>
+</div>
+<div id="hint">
+  <kbd>&rarr;</kbd> next &middot; <kbd>&larr;</kbd> prev &middot; <kbd>Space</kbd> play/pause &middot; <kbd>L</kbd> loop
+</div>
 <script>
-const slides = ${slidesJson};
-let idx = 0;
-const img = document.getElementById('slide');
-const counter = document.getElementById('counter');
-function show(i) {
-  idx = Math.max(0, Math.min(slides.length - 1, i));
-  img.src = slides[idx];
-  counter.textContent = 'Step ' + (idx + 1) + ' / ' + slides.length;
-}
-show(0);
-document.addEventListener('keydown', function(e) {
-  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); show(idx + 1); }
-  if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); }
-});
-img.addEventListener('click', function() { show(idx + 1); });
+(function () {
+  var slides = ${slidesJson};
+  var STEP_MS = ${stepMs};
+  var idx = 0;
+  var playing = false;
+  var looping = ${initialLoop};
+  var timer = null;
+
+  var imgEl = document.getElementById('slide');
+  var counterEl = document.getElementById('counter');
+  var playBtn = document.getElementById('playBtn');
+  var loopBtn = document.getElementById('loopBtn');
+  var prevBtn = document.getElementById('prevBtn');
+  var nextBtn = document.getElementById('nextBtn');
+
+  function render() {
+    imgEl.src = slides[idx];
+    counterEl.textContent = (idx + 1) + ' / ' + slides.length;
+    loopBtn.classList.toggle('active', looping);
+    playBtn.innerHTML = playing ? '&#10074;&#10074;' : '&#9654;';
+    playBtn.classList.toggle('playing', playing);
+  }
+
+  function go(i) {
+    if (i < 0) i = 0;
+    if (i >= slides.length) i = slides.length - 1;
+    idx = i;
+    render();
+  }
+
+  function next() {
+    if (idx < slides.length - 1) {
+      idx++;
+    } else if (looping) {
+      idx = 0;
+    } else {
+      pause();
+      return;
+    }
+    render();
+  }
+
+  function prev() {
+    if (idx > 0) idx--;
+    else if (looping) idx = slides.length - 1;
+    render();
+  }
+
+  function play() {
+    if (playing) return;
+    playing = true;
+    if (idx >= slides.length - 1 && !looping) idx = 0;
+    render();
+    timer = setInterval(next, STEP_MS);
+  }
+
+  function pause() {
+    if (!playing) return;
+    playing = false;
+    if (timer) { clearInterval(timer); timer = null; }
+    render();
+  }
+
+  function togglePlay() { playing ? pause() : play(); }
+  function toggleLoop() { looping = !looping; render(); }
+
+  prevBtn.addEventListener('click', function () { pause(); prev(); });
+  nextBtn.addEventListener('click', function () { pause(); next(); });
+  playBtn.addEventListener('click', togglePlay);
+  loopBtn.addEventListener('click', toggleLoop);
+  imgEl.addEventListener('click', function () { pause(); next(); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight') { e.preventDefault(); pause(); next(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); pause(); prev(); }
+    else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'l' || e.key === 'L') { e.preventDefault(); toggleLoop(); }
+    else if (e.key === 'Home') { e.preventDefault(); pause(); go(0); }
+    else if (e.key === 'End') { e.preventDefault(); pause(); go(slides.length - 1); }
+  });
+
+  render();
+})();
 </script>
 </body>
 </html>`;
 
   const blob = new Blob([html], { type: "text/html" });
-  download(blob, `directoor-slides-${region.id}.html`);
+  download(blob, `directoor-animation-${region.id}.html`);
 }
 
 function download(blob: Blob, filename: string) {

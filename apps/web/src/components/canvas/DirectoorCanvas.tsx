@@ -563,6 +563,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [exportAnimationOpen, setExportAnimationOpen] = useState(false);
+  // When the export dialog opens via a per-region shortcut, preselect
+  // that region in the dialog's dropdown. Null = use the default (first
+  // region), which is how the top-toolbar global Export button behaves.
+  const [exportPreselectRegionId, setExportPreselectRegionId] = useState<string | null>(null);
 
   // Selection state for showing "Animate this" button
   const [selectedShapeIds, setSelectedShapeIds] = useState<TLShapeId[]>([]);
@@ -1354,6 +1358,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           onDelete={deleteRegion}
           isActive={activeRegionId === region.id}
           onActivate={() => setActiveRegionId(region.id)}
+          onExport={() => {
+            setExportPreselectRegionId(region.id);
+            setExportAnimationOpen(true);
+          }}
         />
       ))}
 
@@ -1391,7 +1399,11 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         <AnimationExportDialog
           editor={editor}
           regions={animationRegions}
-          onClose={() => setExportAnimationOpen(false)}
+          initialRegionId={exportPreselectRegionId}
+          onClose={() => {
+            setExportAnimationOpen(false);
+            setExportPreselectRegionId(null);
+          }}
         />
       )}
     </div>
