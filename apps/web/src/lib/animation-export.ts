@@ -201,6 +201,113 @@ export async function exportRegionAsWebm(
   download(blob, `directoor-animation-${region.id}.webm`);
 }
 
+/**
+ * exportRegionAsSlides — exports each animation step as a self-contained
+ * HTML slideshow file that supports arrow-key navigation.
+ *
+ * The HTML file embeds all frames as base64 data-URIs, so it works
+ * offline and can be opened in any browser. Pressing the right arrow
+ * key (or clicking) advances to the next frame — identical behaviour
+ * to presenting a PowerPoint deck in Slide Show mode.
+ *
+ * The user can also import the individual slide images into PowerPoint:
+ *   Insert → Photo Album → add each PNG as a new slide.
+ */
+export async function exportRegionAsSlides(
+  editor: Editor,
+  region: AnimationRegionData,
+  opts: ExportOptions,
+): Promise<void> {
+  const { bitmaps, widthPx, heightPx } = await captureFrames(editor, region, opts);
+
+  // Convert each ImageBitmap → PNG data-URI (for embedding in HTML)
+  const offscreen = new OffscreenCanvas(widthPx, heightPx);
+  const ctx = offscreen.getContext("2d")!;
+  const dataUrls: string[] = [];
+
+  for (let i = 0; i < bitmaps.length; i++) {
+    ctx.clearRect(0, 0, widthPx, heightPx);
+    ctx.drawImage(bitmaps[i]!, 0, 0);
+    const blob = await offscreen.convertToBlob({ type: "image/png" });
+    const dataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(blob);
+    });
+    dataUrls.push(dataUrl);
+    bitmaps[i]!.close();
+    opts.onProgress?.((i + 1) / bitmaps.length);
+  }
+
+  // Build a minimal self-contained HTML slideshow
+  const total = dataUrls.length;
+  const slidesJson = JSON.stringify(dataUrls);
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Directoor Animation (${total} steps)</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1e293b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: system-ui, sans-serif;
+    color: #94a3b8;
+    user-select: none;
+  }
+  #slide {
+    max-width: 95vw;
+    max-height: 85vh;
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    cursor: pointer;
+  }
+  #counter {
+    margin-top: 16px;
+    font-size: 13px;
+    letter-spacing: 0.05em;
+  }
+  #hint {
+    margin-top: 6px;
+    font-size: 11px;
+    opacity: 0.55;
+  }
+</style>
+</head>
+<body>
+<img id="slide" src="" alt="Animation slide" />
+<div id="counter"></div>
+<div id="hint">Click or press → to advance · ← to go back</div>
+<script>
+const slides = ${slidesJson};
+let idx = 0;
+const img = document.getElementById('slide');
+const counter = document.getElementById('counter');
+function show(i) {
+  idx = Math.max(0, Math.min(slides.length - 1, i));
+  img.src = slides[idx];
+  counter.textContent = 'Step ' + (idx + 1) + ' / ' + slides.length;
+}
+show(0);
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); show(idx + 1); }
+  if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); }
+});
+img.addEventListener('click', function() { show(idx + 1); });
+</script>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html" });
+  download(blob, `directoor-slides-${region.id}.html`);
+}
+
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

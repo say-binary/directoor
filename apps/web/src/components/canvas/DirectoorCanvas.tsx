@@ -5,7 +5,8 @@ import {
   Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions, TLShape,
   atom, useValue, useEditor, DefaultStylePanel,
 } from "tldraw";
-import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles } from "./shapes/DirectoorShapes";
+import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles, TL_COLOR_HEX } from "./shapes/DirectoorShapes";
+import type { TLDefaultColorStyle } from "tldraw";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -309,6 +310,124 @@ function PageChrome() {
 }
 
 /**
+ * LabelColorPicker — a small color-swatch row that controls `labelColor`
+ * on selected Directoor shapes independently of their stroke color.
+ * Renders below the DefaultStylePanel (positioned via DOM query on mount).
+ *
+ * Only appears when at least one selected shape has a `labelColor` prop
+ * (i.e. is a Directoor geo shape — not an arrow, image, or text shape).
+ */
+const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
+  "black", "grey", "blue", "light-blue", "green", "light-green",
+  "red", "light-red", "violet", "light-violet", "orange", "yellow", "white",
+];
+
+function LabelColorPicker() {
+  const editor = useEditor();
+
+  // Read the shared labelColor across selected shapes (null = no directoor shape selected)
+  const labelColor = useValue<TLDefaultColorStyle | "mixed" | null>(
+    "labelColor",
+    () => {
+      const ids = editor.getSelectedShapeIds();
+      let shared: TLDefaultColorStyle | null | "mixed" = null;
+      for (const id of ids) {
+        const shape = editor.getShape(id);
+        const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
+        if (!props || props.labelColor === undefined) continue;
+        if (shared === null) {
+          shared = props.labelColor;
+        } else if (shared !== props.labelColor) {
+          return "mixed";
+        }
+      }
+      return shared;
+    },
+    [editor],
+  );
+
+  // Pin just below the tldraw style panel — polled so it follows on scroll/resize.
+  const [top, setTop] = useState(340);
+  useEffect(() => {
+    const update = () => {
+      const panel = document.querySelector(".tlui-style-panel");
+      if (panel) {
+        const rect = panel.getBoundingClientRect();
+        setTop(rect.bottom + 6);
+      }
+    };
+    update();
+    const id = setInterval(update, 300);
+    return () => clearInterval(id);
+  }, []);
+
+  if (labelColor === null) return null;
+
+  const setColor = (c: TLDefaultColorStyle) => {
+    const ids = editor.getSelectedShapeIds();
+    editor.batch(() => {
+      for (const id of ids) {
+        const shape = editor.getShape(id);
+        const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
+        if (!props || props.labelColor === undefined) continue;
+        editor.updateShape({ id, type: shape!.type, props: { ...props, labelColor: c } });
+      }
+    });
+  };
+
+  return (
+    <div
+      className="directoor-label-color-panel"
+      style={{
+        position: "fixed",
+        top,
+        right: `calc(100vw - var(--ds-page-right-x, 100vw) + 16px)`,
+        zIndex: 9993,
+        background: "white",
+        borderRadius: 8,
+        boxShadow: "0 2px 12px rgba(15,23,42,0.12)",
+        padding: "6px 8px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        minWidth: 148,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 600, color: "#64748B", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        Text color
+      </div>
+      <div style={{ display: "flex", gap: 3, flexWrap: "wrap" }}>
+        {LABEL_COLOR_OPTIONS.map((c) => {
+          const isActive = labelColor === c;
+          return (
+            <button
+              key={c}
+              title={c}
+              onClick={() => setColor(c)}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 4,
+                background: TL_COLOR_HEX[c] ?? "#0F172A",
+                border: isActive
+                  ? "2px solid #3b82f6"
+                  : c === "white"
+                    ? "1px solid #CBD5E1"
+                    : "1px solid rgba(0,0,0,0.12)",
+                cursor: "pointer",
+                outline: "none",
+                flexShrink: 0,
+                boxSizing: "border-box",
+              }}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
  * ConditionalStylePanel — renders tldraw's DefaultStylePanel only when
  * at least one shape is selected. Because our Directoor shapes now
  * declare their style props (color/fill/dash) using tldraw's standard
@@ -327,7 +446,12 @@ function ConditionalStylePanel() {
     [editor],
   );
   if (!hasSelection) return null;
-  return <DefaultStylePanel />;
+  return (
+    <>
+      <DefaultStylePanel />
+      <LabelColorPicker />
+    </>
+  );
 }
 
 // Hide tldraw UI elements we don't need; mount the chrome.
@@ -408,6 +532,9 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
 
   // Animation regions
   const [animationRegions, setAnimationRegions] = useState<AnimationRegionData[]>([]);
+  // Only the active region responds to ArrowRight key presses — prevents all
+  // regions from advancing simultaneously (Issue 4 fix).
+  const [activeRegionId, setActiveRegionId] = useState<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
   const [exportAnimationOpen, setExportAnimationOpen] = useState(false);
 
@@ -482,8 +609,16 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     /** Clamp a shape record so it sits entirely inside [0, pageWidth] x
      *  [0, ∞). If the shape has a `w` prop, also shrink it to fit when
      *  it would otherwise extend past the right edge. Returns the same
-     *  reference if no clamp was needed. */
+     *  reference if no clamp was needed.
+     *
+     *  IMPORTANT: Arrow shapes (both our directoor-arrow and tldraw's native
+     *  arrow) store their visual endpoints in props (startX/endX etc.) — not
+     *  in shape.x / shape.y. Clamping shape.x/y on arrows makes them jump
+     *  whenever a style is changed or the snapshot is loaded (Issues 1 & 2).
+     *  We skip arrows entirely: they live wherever the user placed them. */
+    const ARROW_TYPES = new Set(["directoor-arrow", "arrow"]);
     const clampShape = (s: TLShape): TLShape => {
+      if (ARROW_TYPES.has(s.type)) return s;
       const props = s.props as { w?: number };
       const pw = pageWidthRef.current;
       const hasW = typeof props.w === "number" && props.w > 0;
@@ -515,8 +650,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndClamp(next));
     // After-change backstop. If somehow a shape landed off-page despite
     // the before-handlers, force-correct it. Skip if the before-clamp
-    // already fixed it (cheap shallow check).
+    // already fixed it (cheap shallow check). Arrows are exempt — see
+    // clampShape comment above.
     const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
+      if (ARROW_TYPES.has(next.type)) return;
       const corrected = clampShape(next);
       if (corrected !== next) {
         // Use a microtask so we don't recurse inside the side-effect.
@@ -1071,6 +1208,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     };
 
     setAnimationRegions((prev) => [...prev, newRegion]);
+    setActiveRegionId(newRegion.id);
     editor.selectNone();
   }, [editor, selectedShapeIds, animationRegions]);
 
@@ -1101,7 +1239,15 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   }, []);
 
   const deleteRegion = useCallback((regionId: string) => {
-    setAnimationRegions((prev) => prev.filter((r) => r.id !== regionId));
+    setAnimationRegions((prev) => {
+      const next = prev.filter((r) => r.id !== regionId);
+      // If the deleted region was active, activate the last remaining one
+      setActiveRegionId((cur) => {
+        if (cur !== regionId) return cur;
+        return next.length > 0 ? next[next.length - 1]!.id : null;
+      });
+      return next;
+    });
   }, []);
 
   // Check if any region is in edit mode (to show hint in command bar)
@@ -1149,6 +1295,8 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           region={region}
           onUpdate={updateRegion}
           onDelete={deleteRegion}
+          isActive={activeRegionId === region.id}
+          onActivate={() => setActiveRegionId(region.id)}
         />
       ))}
 

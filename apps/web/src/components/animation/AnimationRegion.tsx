@@ -17,9 +17,16 @@ interface AnimationRegionProps {
   region: AnimationRegionData;
   onUpdate: (region: AnimationRegionData) => void;
   onDelete: (regionId: string) => void;
+  /** Whether this region is the "active" one for keyboard navigation.
+   *  Only the active region responds to ArrowRight key presses, so
+   *  multiple regions don't all advance simultaneously. */
+  isActive: boolean;
+  /** Callback to make this region the active one when the user interacts
+   *  with its controls (step, play, etc.). */
+  onActivate: () => void;
 }
 
-export function AnimationRegion({ editor, region, onUpdate, onDelete }: AnimationRegionProps) {
+export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, onActivate }: AnimationRegionProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentStep, setCurrentStep] = useState(-1);
   const [sequenceInput, setSequenceInput] = useState(region.sequence.join(","));
@@ -193,7 +200,9 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
   }, [region.sequence, region.isLooping, currentStep, hideAll, showAll, revealBySequenceIndex]);
 
   useEffect(() => {
-    if (region.sequence.length === 0 || isPlaying) return;
+    // Only the ACTIVE region responds to ArrowRight — prevents all regions
+    // from advancing simultaneously when the user presses the arrow key.
+    if (region.sequence.length === 0 || isPlaying || !isActive) return;
     const handleKeyDown = (e: globalThis.KeyboardEvent) => {
       if (e.key === "ArrowRight") {
         e.preventDefault();
@@ -202,7 +211,7 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [region.sequence, isPlaying, stepForward]);
+  }, [region.sequence, isPlaying, stepForward, isActive]);
 
   useEffect(() => {
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
@@ -379,15 +388,15 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
         {hasSequence && !region.isEditMode && (
           <>
             {isPlaying ? (
-              <button onClick={stopAnimation} className="rounded-lg bg-red-500 p-1.5 text-white hover:bg-red-600" title="Stop">
+              <button onClick={() => { onActivate(); stopAnimation(); }} className="rounded-lg bg-red-500 p-1.5 text-white hover:bg-red-600" title="Stop">
                 <Square size={12} />
               </button>
             ) : (
               <>
-                <button onClick={playAnimation} className="rounded-lg bg-blue-500 p-1.5 text-white hover:bg-blue-600" title="Play">
+                <button onClick={() => { onActivate(); playAnimation(); }} className="rounded-lg bg-blue-500 p-1.5 text-white hover:bg-blue-600" title="Play">
                   <Play size={12} />
                 </button>
-                <button onClick={stepForward} className="rounded-lg bg-slate-200 p-1.5 text-slate-700 hover:bg-slate-300" title="Step (→)">
+                <button onClick={() => { onActivate(); stepForward(); }} className={`rounded-lg p-1.5 text-slate-700 hover:bg-slate-300 transition-colors ${isActive ? "bg-blue-100 ring-1 ring-blue-300" : "bg-slate-200"}`} title="Step (→) — click to activate, then use arrow key">
                   <ChevronRight size={12} />
                 </button>
               </>

@@ -80,7 +80,17 @@ interface DirectoorShapeProps {
   size: TLDefaultSizeStyle;
   align: TLDefaultHorizontalAlignStyle;
   verticalAlign: TLDefaultVerticalAlignStyle;
+  /** Label / text color — independent of the shape's stroke color.
+   *  Defaults to "black" so text is always readable regardless of fill.
+   *  Controlled separately from `color` (which drives stroke + fill tint). */
+  labelColor: TLDefaultColorStyle;
 }
+
+// All valid tldraw color enum values — used for the labelColor validator.
+const TL_COLOR_VALUES = [
+  "black", "grey", "light-violet", "violet", "blue", "light-blue",
+  "yellow", "orange", "green", "light-green", "light-red", "red", "white",
+] as const;
 
 const sharedProps: RecordProps<TLBaseShape<string, DirectoorShapeProps>> = {
   w: T.number,
@@ -93,6 +103,7 @@ const sharedProps: RecordProps<TLBaseShape<string, DirectoorShapeProps>> = {
   size: DefaultSizeStyle,
   align: DefaultHorizontalAlignStyle,
   verticalAlign: DefaultVerticalAlignStyle,
+  labelColor: T.literalEnum(...TL_COLOR_VALUES),
 };
 
 const defaultProps: DirectoorShapeProps = {
@@ -106,6 +117,7 @@ const defaultProps: DirectoorShapeProps = {
   size: "m",
   align: "middle",
   verticalAlign: "middle",
+  labelColor: "black",
 };
 
 // Label font sizes in px per tldraw size enum — matches native geo shape.
@@ -123,7 +135,7 @@ const LABEL_PADDING = 10;
 // Keeping our palette intentionally means existing diagrams look
 // unchanged (same blues, greens, etc.) while the UI gains the native
 // style panel.
-const TL_COLOR_HEX: Record<TLDefaultColorStyle, string> = {
+export const TL_COLOR_HEX: Record<TLDefaultColorStyle, string> = {
   black: "#0F172A",
   grey: "#334155",
   "light-violet": "#A78BFA",
@@ -330,6 +342,12 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
       next.verticalAlign = "middle";
       changed = true;
     }
+    // labelColor: new prop for independent text color. Old shapes don't
+    // have it, so default to "black" (readable on any background).
+    if (typeof props.labelColor !== "string" || !VALID_TL_COLORS.has(props.labelColor as TLDefaultColorStyle)) {
+      next.labelColor = "black";
+      changed = true;
+    }
   }
 
   return changed ? { ...shape, props: next as T["props"] } : shape;
@@ -392,7 +410,7 @@ function DirectoorShapeLabel({
     () => editor.getOnlySelectedShapeId() === shape.id,
     [editor, shape.id],
   );
-  const { richText, color, font, size, align, verticalAlign } = shape.props;
+  const { richText, labelColor, font, size, align, verticalAlign } = shape.props;
   return (
     <RichTextLabel
       shapeId={shape.id}
@@ -405,7 +423,7 @@ function DirectoorShapeLabel({
       align={align}
       verticalAlign={bottomAnchored ? "end" : verticalAlign}
       isSelected={isOnlySelected}
-      labelColor={TL_COLOR_HEX[color] ?? TL_COLOR_HEX.grey}
+      labelColor={TL_COLOR_HEX[labelColor ?? "black"] ?? TL_COLOR_HEX.black}
       wrap
     />
   );

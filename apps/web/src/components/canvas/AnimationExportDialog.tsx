@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { X, Loader2, Film, Image as ImageIcon, Download } from "lucide-react";
+import { X, Loader2, Film, Image as ImageIcon, Download, Presentation } from "lucide-react";
 import type { Editor } from "tldraw";
 import type { AnimationRegionData } from "../animation/AnimationRegion";
-import { exportRegionAsGif, exportRegionAsWebm } from "@/lib/animation-export";
+import { exportRegionAsGif, exportRegionAsWebm, exportRegionAsSlides } from "@/lib/animation-export";
 
 interface AnimationExportDialogProps {
   editor: Editor;
@@ -23,7 +23,7 @@ interface AnimationExportDialogProps {
  */
 export function AnimationExportDialog({ editor, regions, onClose }: AnimationExportDialogProps) {
   const [regionId, setRegionId] = useState<string | null>(regions[0]?.id ?? null);
-  const [format, setFormat] = useState<"gif" | "webm">("gif");
+  const [format, setFormat] = useState<"gif" | "webm" | "slides">("gif");
   const [stepDuration, setStepDuration] = useState(800);
   const [loop, setLoop] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -44,8 +44,14 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
           loop,
           onProgress: setProgress,
         });
-      } else {
+      } else if (format === "webm") {
         await exportRegionAsWebm(editor, region, {
+          stepDurationMs: stepDuration,
+          loop,
+          onProgress: setProgress,
+        });
+      } else {
+        await exportRegionAsSlides(editor, region, {
           stepDurationMs: stepDuration,
           loop,
           onProgress: setProgress,
@@ -95,7 +101,7 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
               </select>
             </label>
 
-            <div className="mb-3 grid grid-cols-2 gap-2">
+            <div className="mb-3 grid grid-cols-3 gap-2">
               <button
                 onClick={() => setFormat("gif")}
                 disabled={busy}
@@ -120,7 +126,25 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
                 <Film size={13} />
                 WebM
               </button>
+              <button
+                onClick={() => setFormat("slides")}
+                disabled={busy}
+                className={`flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  format === "slides"
+                    ? "border-blue-300 bg-blue-50 text-blue-700"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+                title="Download as HTML slideshow — open in browser, use arrow keys to step through. Can also be imported into PowerPoint."
+              >
+                <Presentation size={13} />
+                Slides
+              </button>
             </div>
+            {format === "slides" && (
+              <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
+                Downloads an HTML file. Open in any browser and use <kbd className="rounded bg-slate-200 px-1 font-mono">→</kbd> / <kbd className="rounded bg-slate-200 px-1 font-mono">←</kbd> to step through frames. Import the frames into PowerPoint via <em>Insert → Photo Album</em>.
+              </p>
+            )}
 
             <label className="mb-3 block">
               <span className="mb-1 block text-xs font-medium text-slate-600">
@@ -147,6 +171,7 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
                 className="accent-blue-500"
               />
               Loop forever {format === "webm" && <span className="text-xs text-slate-400">(WebM ignores loop flag — repeat in browser)</span>}
+              {format === "slides" && <span className="text-xs text-slate-400">(HTML slideshow loops back to step 1)</span>}
             </label>
 
             {busy ? (
@@ -161,7 +186,7 @@ export function AnimationExportDialog({ editor, regions, onClose }: AnimationExp
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
               >
                 <Download size={14} />
-                Export {format.toUpperCase()}
+                Export {format === "slides" ? "Slides" : format.toUpperCase()}
               </button>
             )}
 
