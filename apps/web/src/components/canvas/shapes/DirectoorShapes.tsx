@@ -33,9 +33,22 @@ import {
   DefaultColorStyle,
   DefaultFillStyle,
   DefaultDashStyle,
+  DefaultFontStyle,
+  DefaultSizeStyle,
+  DefaultHorizontalAlignStyle,
+  DefaultVerticalAlignStyle,
+  RichTextLabel,
+  toRichText,
+  richTextValidator,
+  renderPlaintextFromRichText,
   type TLDefaultColorStyle,
   type TLDefaultFillStyle,
   type TLDefaultDashStyle,
+  type TLDefaultFontStyle,
+  type TLDefaultSizeStyle,
+  type TLDefaultHorizontalAlignStyle,
+  type TLDefaultVerticalAlignStyle,
+  type TLRichText,
 } from "tldraw";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -56,29 +69,54 @@ import { useEffect, useMemo, useRef, useState } from "react";
 interface DirectoorShapeProps {
   w: number;
   h: number;
-  label: string;
+  /** Rich-text label rendered inside the shape via tldraw's RichTextLabel.
+   *  Supports multi-line, indentation, bold, italic — the same editor the
+   *  native geo / text / note shapes use. */
+  richText: TLRichText;
   color: TLDefaultColorStyle;
   fill: TLDefaultFillStyle;
   dash: TLDefaultDashStyle;
+  font: TLDefaultFontStyle;
+  size: TLDefaultSizeStyle;
+  align: TLDefaultHorizontalAlignStyle;
+  verticalAlign: TLDefaultVerticalAlignStyle;
 }
 
 const sharedProps: RecordProps<TLBaseShape<string, DirectoorShapeProps>> = {
   w: T.number,
   h: T.number,
-  label: T.string,
+  richText: richTextValidator,
   color: DefaultColorStyle,
   fill: DefaultFillStyle,
   dash: DefaultDashStyle,
+  font: DefaultFontStyle,
+  size: DefaultSizeStyle,
+  align: DefaultHorizontalAlignStyle,
+  verticalAlign: DefaultVerticalAlignStyle,
 };
 
 const defaultProps: DirectoorShapeProps = {
   w: 140,
   h: 80,
-  label: "",
+  richText: toRichText(""),
   color: "grey",
   fill: "none",
   dash: "solid",
+  font: "draw",
+  size: "m",
+  align: "middle",
+  verticalAlign: "middle",
 };
+
+// Label font sizes in px per tldraw size enum — matches native geo shape.
+const LABEL_FONT_SIZES: Record<TLDefaultSizeStyle, number> = {
+  s: 18,
+  m: 24,
+  l: 36,
+  xl: 48,
+};
+const LABEL_LINE_HEIGHT = 1.3;
+const LABEL_PADDING = 10;
 
 // ─── Color / fill resolver ──────────────────────────────────────────
 // Tldraw's color names → the actual hex Directoor has always rendered.
@@ -223,6 +261,13 @@ const VALID_TL_COLORS = new Set<TLDefaultColorStyle>([
 const VALID_TL_FILLS = new Set<TLDefaultFillStyle>(["none", "semi", "solid", "pattern"]);
 const VALID_TL_DASHES = new Set<TLDefaultDashStyle>(["draw", "solid", "dashed", "dotted"]);
 
+const VALID_TL_FONTS = new Set<TLDefaultFontStyle>(["draw", "sans", "serif", "mono"]);
+const VALID_TL_SIZES = new Set<TLDefaultSizeStyle>(["s", "m", "l", "xl"]);
+const VALID_TL_H_ALIGNS = new Set<TLDefaultHorizontalAlignStyle>([
+  "start", "middle", "end", "start-legacy", "end-legacy", "middle-legacy",
+]);
+const VALID_TL_V_ALIGNS = new Set<TLDefaultVerticalAlignStyle>(["start", "middle", "end"]);
+
 export function normalizeDirectoorShapeStyles<T extends { type: string; props?: object }>(
   shape: T,
 ): T {
@@ -249,7 +294,59 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
     changed = true;
   }
 
+  // ─── Label → richText migration ───────────────────────────────────
+  // Older canvases stored `label: string`. Wrap into tldraw's rich-text
+  // shape so the new RichTextLabel editor can render/edit it. Arrows
+  // (directoor-arrow) still use a plain string label by design — this
+  // migration only applies to shapes that declare richText in their
+  // new sharedProps.
+  const isArrow = shape.type === "directoor-arrow";
+  if (!isArrow) {
+    if (typeof props.label === "string" && (!props.richText || !(props.richText as { type?: string })?.type)) {
+      next.richText = toRichText(props.label);
+      delete next.label;
+      changed = true;
+    } else if (!props.richText) {
+      next.richText = toRichText("");
+      changed = true;
+    }
+
+    // ─── Text-style props default-fill ────────────────────────────
+    // Old shapes had no font/size/align; default them so validation
+    // passes against the new sharedProps.
+    if (typeof props.font !== "string" || !VALID_TL_FONTS.has(props.font as TLDefaultFontStyle)) {
+      next.font = "draw";
+      changed = true;
+    }
+    if (typeof props.size !== "string" || !VALID_TL_SIZES.has(props.size as TLDefaultSizeStyle)) {
+      next.size = "m";
+      changed = true;
+    }
+    if (typeof props.align !== "string" || !VALID_TL_H_ALIGNS.has(props.align as TLDefaultHorizontalAlignStyle)) {
+      next.align = "middle";
+      changed = true;
+    }
+    if (typeof props.verticalAlign !== "string" || !VALID_TL_V_ALIGNS.has(props.verticalAlign as TLDefaultVerticalAlignStyle)) {
+      next.verticalAlign = "middle";
+      changed = true;
+    }
+  }
+
   return changed ? { ...shape, props: next as T["props"] } : shape;
+}
+
+/**
+ * Return the plaintext contents of a Directoor shape's label. Returns ""
+ * for shapes without a richText prop. Used by the `getText()` override
+ * on each shape util so tldraw's search / export features see our labels.
+ */
+export function getDirectoorShapeText(
+  editor: import("tldraw").Editor,
+  shape: { props?: { richText?: TLRichText } },
+): string {
+  const rt = shape.props?.richText;
+  if (!rt) return "";
+  return renderPlaintextFromRichText(editor, rt);
 }
 
 function strokeDashArray(dash: DirectoorShapeProps["dash"]): string {
@@ -260,268 +357,90 @@ function strokeDashArray(dash: DirectoorShapeProps["dash"]): string {
 }
 
 /**
- * Editable label for all Directoor custom shapes.
+ * DirectoorShapeLabel — unified label renderer for every Directoor shape.
  *
- * Behavior:
- * - Shows the label as static text by default
- * - When tldraw marks this shape as being edited (editor.getEditingShapeId() === shape.id),
- *   renders a contentEditable div that auto-focuses and commits on blur / Enter
- * - Escape cancels the edit
+ * Wraps tldraw's <RichTextLabel/>, which:
+ *   - Renders multi-line, indent-preserving rich text using tldraw's own
+ *     ProseMirror-based editor (same component native geo/text/note use).
+ *   - Enters edit mode automatically when tldraw's editing-shape id
+ *     matches ours. No contentEditable juggling.
+ *   - Writes changes back via editor.updateShape({ props: { richText } })
+ *     itself — our shape utils only need canEdit() => true.
  *
- * This requires the shape util to override canEdit() => true so tldraw
- * enters edit mode on double-click.
+ * Reads font / size / align / verticalAlign straight off the shape's
+ * own props (which come from tldraw's standard style enums), so the
+ * DefaultStylePanel controls drive the label appearance with no extra
+ * wiring per shape.
+ *
+ * `bottomAnchored` forces verticalAlign to "end" — used by shapes whose
+ * body draws above the label area (actor, document).
  */
-function EditableLabel({
-  shapeId,
-  label,
-  w,
-  h,
+function DirectoorShapeLabel({
+  shape,
   bottomAnchored = false,
 }: {
-  shapeId: import("tldraw").TLShapeId;
-  label: string;
-  w: number;
-  h: number;
-  /** If true, label sits at the bottom (used by actor / document shapes) */
+  shape: {
+    id: import("tldraw").TLShapeId;
+    type: string;
+    props: DirectoorShapeProps;
+  };
   bottomAnchored?: boolean;
 }) {
   const editor = useEditor();
-  // CRITICAL: must use useValue so the component re-renders when
-  // editor.getEditingShapeId() changes. Without it, the shape never
-  // knows it entered edit mode.
-  const isEditing = useValue(
-    "isEditing",
-    () => editor.getEditingShapeId() === (shapeId as never),
-    [editor, shapeId],
+  const isOnlySelected = useValue(
+    "isOnlySelected",
+    () => editor.getOnlySelectedShapeId() === shape.id,
+    [editor, shape.id],
   );
-  const [draft, setDraft] = useState(label);
-  const inputRef = useRef<HTMLDivElement | null>(null);
-
-  // Reset draft whenever we enter edit mode
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(label);
-      // Focus + select-all after mount
-      const t = setTimeout(() => {
-        const el = inputRef.current;
-        if (el) {
-          el.focus();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          const sel = window.getSelection();
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-        }
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [isEditing, label]);
-
-  const commit = () => {
-    const shape = editor.getShape(shapeId);
-    if (!shape) return;
-    const trimmed = draft.trim();
-    if (trimmed !== label) {
-      editor.updateShape({
-        id: shape.id,
-        type: shape.type,
-        props: { ...(shape.props as Record<string, unknown>), label: trimmed },
-      });
-    }
-    editor.setEditingShape(null);
-  };
-
-  const cancel = () => {
-    setDraft(label);
-    editor.setEditingShape(null);
-  };
-
-  // Shared label style
-  const fontSize = Math.min(16, Math.max(10, h / 6));
-  const baseStyle: React.CSSProperties = {
-    position: "absolute",
-    ...(bottomAnchored
-      ? { left: 0, right: 0, bottom: 4, textAlign: "center", padding: "0 4px" }
-      : { inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 8 }),
-    fontFamily: "Inter, system-ui, sans-serif",
-    fontSize: bottomAnchored ? 12 : fontSize,
-    fontWeight: 600,
-    color: "#0f172a",
-    lineHeight: 1.2,
-    wordBreak: "break-word",
-  };
-
-  if (isEditing) {
-    return (
-      <div
-        ref={inputRef}
-        contentEditable
-        suppressContentEditableWarning
-        onPointerDown={stopEventPropagation}
-        onMouseDown={stopEventPropagation}
-        onClick={stopEventPropagation}
-        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            commit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            cancel();
-          }
-          e.stopPropagation();
-        }}
-        style={{
-          ...baseStyle,
-          cursor: "text",
-          outline: "2px solid #3b82f6",
-          outlineOffset: 2,
-          borderRadius: 4,
-          background: "rgba(255,255,255,0.95)",
-          whiteSpace: "pre-wrap",
-          pointerEvents: "all",
-          userSelect: "text",
-        }}
-      >
-        {label}
-      </div>
-    );
-  }
-
+  const { richText, color, font, size, align, verticalAlign } = shape.props;
   return (
-    <div style={{ ...baseStyle, pointerEvents: "none", textAlign: "center" }}>
-      {label}
-    </div>
+    <RichTextLabel
+      shapeId={shape.id}
+      type={shape.type}
+      richText={richText}
+      font={font}
+      fontSize={LABEL_FONT_SIZES[size]}
+      lineHeight={LABEL_LINE_HEIGHT}
+      padding={LABEL_PADDING}
+      align={align}
+      verticalAlign={bottomAnchored ? "end" : verticalAlign}
+      isSelected={isOnlySelected}
+      labelColor={TL_COLOR_HEX[color] ?? TL_COLOR_HEX.grey}
+      wrap
+    />
   );
-}
-
-// Kept for backward compat with existing call sites that don't need edit
-function ShapeLabel({ shapeId, label, w, h }: { shapeId: import("tldraw").TLShapeId; label: string; w: number; h: number }) {
-  return <EditableLabel shapeId={shapeId} label={label} w={w} h={h} />;
 }
 
 /**
- * Editable label positioned to the front-most layer of the Stack shape.
- * Uses the same editing logic as EditableLabel but with custom positioning.
+ * Thin wrapper around DirectoorShapeLabel that positions the label on the
+ * front-most layer of a Stack shape. Needed because Stack draws offset
+ * rectangles and the label should sit inside the frontmost one, not fill
+ * the whole shape.
  */
 function StackLabel({
-  shapeId,
-  label,
+  shape,
   topOffset,
   innerW,
   innerH,
 }: {
-  shapeId: import("tldraw").TLShapeId;
-  label: string;
+  shape: { id: import("tldraw").TLShapeId; type: string; props: DirectoorShapeProps };
   topOffset: number;
   innerW: number;
   innerH: number;
 }) {
-  const editor = useEditor();
-  const isEditing = useValue(
-    "isEditing",
-    () => editor.getEditingShapeId() === (shapeId as never),
-    [editor, shapeId],
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        top: topOffset,
+        width: innerW,
+        height: innerH,
+      }}
+    >
+      <DirectoorShapeLabel shape={shape} />
+    </div>
   );
-  const [draft, setDraft] = useState(label);
-  const inputRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(label);
-      const t = setTimeout(() => {
-        const el = inputRef.current;
-        if (el) {
-          el.focus();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          const sel = window.getSelection();
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-        }
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [isEditing, label]);
-
-  const commit = () => {
-    const shape = editor.getShape(shapeId as never);
-    if (!shape) return;
-    const trimmed = draft.trim();
-    if (trimmed !== label) {
-      editor.updateShape({
-        id: shape.id,
-        type: shape.type,
-        props: { ...(shape.props as Record<string, unknown>), label: trimmed },
-      });
-    }
-    editor.setEditingShape(null);
-  };
-
-  const cancel = () => {
-    setDraft(label);
-    editor.setEditingShape(null);
-  };
-
-  const baseStyle: React.CSSProperties = {
-    position: "absolute",
-    left: 0,
-    top: topOffset,
-    width: innerW,
-    height: innerH,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    fontFamily: "Inter, system-ui, sans-serif",
-    fontSize: Math.min(15, Math.max(10, innerH / 6)),
-    fontWeight: 600,
-    color: "#0f172a",
-    textAlign: "center",
-    padding: 6,
-    wordBreak: "break-word",
-    lineHeight: 1.2,
-  };
-
-  if (isEditing) {
-    return (
-      <div
-        ref={inputRef}
-        contentEditable
-        suppressContentEditableWarning
-        onPointerDown={stopEventPropagation}
-        onMouseDown={stopEventPropagation}
-        onClick={stopEventPropagation}
-        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            commit();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            cancel();
-          }
-          e.stopPropagation();
-        }}
-        style={{
-          ...baseStyle,
-          cursor: "text",
-          outline: "2px solid #3b82f6",
-          outlineOffset: 2,
-          borderRadius: 4,
-          background: "rgba(255,255,255,0.95)",
-          whiteSpace: "pre-wrap",
-          pointerEvents: "all",
-          userSelect: "text",
-        }}
-      >
-        {label}
-      </div>
-    );
-  }
-
-  return <div style={{ ...baseStyle, pointerEvents: "none" }}>{label}</div>;
 }
 
 // ─── Cylinder Shape (databases, topics, storage) ─────────────────────
@@ -545,7 +464,7 @@ export class DirectoorCylinderShapeUtil extends BaseBoxShapeUtil<DirectoorCylind
   }
 
   override component(shape: DirectoorCylinderShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const ellipseRY = Math.min(h * 0.12, 18);
     const dashArray = strokeDashArray(dash);
@@ -573,7 +492,7 @@ export class DirectoorCylinderShapeUtil extends BaseBoxShapeUtil<DirectoorCylind
             strokeDasharray={dashArray}
           />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -604,7 +523,7 @@ export class DirectoorHexagonShapeUtil extends BaseBoxShapeUtil<DirectoorHexagon
   }
 
   override component(shape: DirectoorHexagonShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const inset = w * 0.18;
@@ -629,7 +548,7 @@ export class DirectoorHexagonShapeUtil extends BaseBoxShapeUtil<DirectoorHexagon
             strokeLinejoin="round"
           />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -660,7 +579,7 @@ export class DirectoorActorShapeUtil extends BaseBoxShapeUtil<DirectoorActorShap
   }
 
   override component(shape: DirectoorActorShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const headR = Math.min(w * 0.18, h * 0.18);
@@ -686,7 +605,7 @@ export class DirectoorActorShapeUtil extends BaseBoxShapeUtil<DirectoorActorShap
           <line x1={cx} y1={bodyBottom} x2={cx + w * 0.2} y2={bodyBottom + h * 0.18} stroke={color} strokeWidth={2.5} strokeDasharray={dashArray} />
         </svg>
         {/* Label below the figure — editable */}
-        <EditableLabel shapeId={shape.id} label={label} w={w} h={h} bottomAnchored />
+        <DirectoorShapeLabel shape={shape} bottomAnchored />
       </HTMLContainer>
     );
   }
@@ -717,7 +636,7 @@ export class DirectoorCloudShapeUtil extends BaseBoxShapeUtil<DirectoorCloudShap
   }
 
   override component(shape: DirectoorCloudShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     // A scalable "cloud" path: combination of arcs forming a fluffy outline
@@ -735,7 +654,7 @@ export class DirectoorCloudShapeUtil extends BaseBoxShapeUtil<DirectoorCloudShap
         <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
           <path d={path} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -766,7 +685,7 @@ export class DirectoorDocumentShapeUtil extends BaseBoxShapeUtil<DirectoorDocume
   }
 
   override component(shape: DirectoorDocumentShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const fold = Math.min(w * 0.25, 24);
@@ -804,7 +723,7 @@ export class DirectoorDocumentShapeUtil extends BaseBoxShapeUtil<DirectoorDocume
             />
           ))}
         </svg>
-        <EditableLabel shapeId={shape.id} label={label} w={w} h={h} bottomAnchored />
+        <DirectoorShapeLabel shape={shape} bottomAnchored />
       </HTMLContainer>
     );
   }
@@ -835,7 +754,7 @@ export class DirectoorStackShapeUtil extends BaseBoxShapeUtil<DirectoorStackShap
   }
 
   override component(shape: DirectoorStackShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const offset = 6;
@@ -868,8 +787,7 @@ export class DirectoorStackShapeUtil extends BaseBoxShapeUtil<DirectoorStackShap
         </svg>
         {/* Label is on the front-most layer — editable */}
         <StackLabel
-          shapeId={shape.id}
-          label={label}
+          shape={shape}
           topOffset={offset * (layers - 1) + 2}
           innerW={innerW}
           innerH={innerH}
@@ -902,7 +820,7 @@ export class DirectoorRectangleShapeUtil extends BaseBoxShapeUtil<DirectoorRecta
   }
 
   override component(shape: DirectoorRectangleShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
@@ -911,7 +829,7 @@ export class DirectoorRectangleShapeUtil extends BaseBoxShapeUtil<DirectoorRecta
           <rect x={1} y={1} width={w - 2} height={h - 2} rx={6}
             fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -940,7 +858,7 @@ export class DirectoorCircleShapeUtil extends BaseBoxShapeUtil<DirectoorCircleSh
   }
 
   override component(shape: DirectoorCircleShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
@@ -949,7 +867,7 @@ export class DirectoorCircleShapeUtil extends BaseBoxShapeUtil<DirectoorCircleSh
           <ellipse cx={w / 2} cy={h / 2} rx={w / 2 - 2} ry={h / 2 - 2}
             fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -978,7 +896,7 @@ export class DirectoorDiamondShapeUtil extends BaseBoxShapeUtil<DirectoorDiamond
   }
 
   override component(shape: DirectoorDiamondShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     return (
@@ -987,7 +905,7 @@ export class DirectoorDiamondShapeUtil extends BaseBoxShapeUtil<DirectoorDiamond
           <polygon points={`${w / 2},2 ${w - 2},${h / 2} ${w / 2},${h - 2} 2,${h / 2}`}
             fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -1016,7 +934,7 @@ export class DirectoorPillShapeUtil extends BaseBoxShapeUtil<DirectoorPillShape>
   }
 
   override component(shape: DirectoorPillShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const radius = Math.min(h / 2, 999);
@@ -1026,7 +944,7 @@ export class DirectoorPillShapeUtil extends BaseBoxShapeUtil<DirectoorPillShape>
           <rect x={1} y={1} width={w - 2} height={h - 2} rx={radius}
             fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }
@@ -1055,7 +973,7 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
   }
 
   override component(shape: DirectoorLayerShape) {
-    const { w, h, label, dash } = shape.props;
+    const { w, h, dash } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const stripeCount = 4;
@@ -1071,7 +989,7 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
             return <line key={i} x1={6} x2={w - 6} y1={y} y2={y} stroke={color} strokeOpacity={0.35} strokeWidth={1.5} />;
           })}
         </svg>
-        <ShapeLabel shapeId={shape.id} label={label} w={w} h={h} />
+        <DirectoorShapeLabel shape={shape} />
       </HTMLContainer>
     );
   }

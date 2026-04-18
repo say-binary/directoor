@@ -738,6 +738,16 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
                       rec.props.contentType = (w <= 220 && h <= 50) ? "inline" : "prose";
                     }
                   }
+                  // Migration: Directoor geo shapes now use tldraw's
+                  // standard style enums (DefaultColor/Fill/Dash) and
+                  // richText for labels. The shared normaliser converts
+                  // legacy hex/string values and wraps plain-string
+                  // labels into tldraw's rich-text JSON.
+                  const fixed = normalizeDirectoorShapeStyles(rec as { type: string; props?: object });
+                  if (fixed !== rec) {
+                    snapshot.store[key] = fixed as typeof rec;
+                    continue;
+                  }
                   snapshot.store[key] = rec;
                 }
               }

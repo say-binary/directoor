@@ -17,20 +17,15 @@ import {
   TLShapeId,
   TLTextShape,
   TLNoteShape,
+  toRichText,
 } from "tldraw";
+import {
+  hexToTldrawColor,
+  fillFromLegacy,
+} from "@/components/canvas/shapes/DirectoorShapes";
 import type { CanvasAction } from "@directoor/core";
 import { resolveIconShape, defaultStyleForSemanticType } from "@directoor/core";
 import { iconShapeToTldrawType } from "@/components/canvas/shapes/DirectoorShapes";
-
-/** Convert plain text to tldraw's richText format (ProseMirror doc) */
-function toRichText(text: string) {
-  const lines = text.split("\n");
-  const content = lines.map((line) => {
-    if (!line) return { type: "paragraph" };
-    return { type: "paragraph", content: [{ type: "text", text: line }] };
-  });
-  return { type: "doc", content };
-}
 
 /** Coerce a TLShapeId to a string for use as a prop value */
 function tlIdAsString(id: TLShapeId | undefined): string {
@@ -171,10 +166,16 @@ function executeAction(
           props: {
             w: obj.size.width,
             h: obj.size.height,
-            label: obj.label,
-            color: stroke,
-            fill,
-            dash: obj.style.strokeStyle,
+            richText: toRichText(obj.label ?? ""),
+            color: hexToTldrawColor(stroke),
+            fill: fillFromLegacy(fill),
+            dash: obj.style.strokeStyle === "dashed" || obj.style.strokeStyle === "dotted"
+              ? obj.style.strokeStyle
+              : "solid",
+            font: "draw",
+            size: "m",
+            align: "middle",
+            verticalAlign: "middle",
           },
         });
       }
@@ -243,9 +244,11 @@ function executeAction(
           toShapeId: tlIdAsString(toTlId),
           fromAnchor: pointToAnchor(conn.fromPointId),
           toAnchor: pointToAnchor(conn.toPointId),
-          color: conn.style.stroke || "#334155",
+          color: hexToTldrawColor(conn.style.stroke || "#334155"),
           strokeWidth: conn.style.strokeWidth || 2,
-          dash: conn.style.strokeStyle || "solid",
+          dash: (conn.style.strokeStyle === "dashed" || conn.style.strokeStyle === "dotted")
+            ? conn.style.strokeStyle
+            : "solid",
           startHead: conn.style.startHead === "none" ? "none" : "arrow",
           endHead: conn.style.endHead === "none" ? "none" : "arrow",
           path: conn.style.path === "straight" ? "straight" : "elbow",

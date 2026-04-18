@@ -4,8 +4,12 @@ import { useState, useMemo } from "react";
 import { Search } from "lucide-react";
 import { OBJECT_LIBRARY, type IconShape, type SemanticObjectDefinition } from "@directoor/core";
 import type { Editor } from "tldraw";
-import { createShapeId } from "tldraw";
-import { iconShapeToTldrawType } from "@/components/canvas/shapes/DirectoorShapes";
+import { createShapeId, toRichText } from "tldraw";
+import {
+  iconShapeToTldrawType,
+  hexToTldrawColor,
+  fillFromLegacy,
+} from "@/components/canvas/shapes/DirectoorShapes";
 
 interface ShapeLibraryProps {
   editor: Editor | null;
@@ -128,14 +132,6 @@ const ARCHETYPES: Archetype[] = [
     defaultStroke: "#0F172A", defaultFill: "transparent",
   },
 ];
-
-/** Convert plain text to tldraw's richText format */
-function toRichText(text: string) {
-  return {
-    type: "doc",
-    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
-  };
-}
 
 export function ShapeLibrary({ editor }: ShapeLibraryProps) {
   const [query, setQuery] = useState("");
@@ -406,7 +402,7 @@ export function createArchetypeShape(
         toShapeId: "",
         fromAnchor: "auto",
         toAnchor: "auto",
-        color: archetype.defaultStroke,
+        color: hexToTldrawColor(archetype.defaultStroke),
         strokeWidth: 2,
         dash: "solid",
         startHead: "none",
@@ -450,7 +446,9 @@ export function createArchetypeShape(
     return tlId;
   }
 
-  // Every other archetype maps to one of our Directoor custom shapes
+  // Every other archetype maps to one of our Directoor custom shapes.
+  // Build props with the NEW sharedProps shape (richText, enum styles).
+  // Hex → tldraw color name / fill enum via our helpers.
   const customType = iconShapeToTldrawType(archetype.iconShape);
   editor.createShape({
     id: tlId,
@@ -460,10 +458,14 @@ export function createArchetypeShape(
     props: {
       w: archetype.defaultWidth,
       h: archetype.defaultHeight,
-      label: archetype.displayName,
-      color: archetype.defaultStroke,
-      fill: archetype.defaultFill,
+      richText: toRichText(archetype.displayName),
+      color: hexToTldrawColor(archetype.defaultStroke),
+      fill: fillFromLegacy(archetype.defaultFill),
       dash: "solid",
+      font: "draw",
+      size: "m",
+      align: "middle",
+      verticalAlign: "middle",
     },
   });
 
