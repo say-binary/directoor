@@ -1012,21 +1012,29 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       setSelectedShapeIds([...ids]);
 
       if (ids.length >= 1) {
-        // Position the "Animate" button near the selection
-        const shapes = ids.map((id) => editor.getShape(id)).filter(Boolean);
-        if (shapes.length > 0) {
-          let minX = Infinity, minY = Infinity, maxX = -Infinity;
-          for (const shape of shapes) {
-            if (!shape) continue;
-            // pageToScreen (NOT pageToViewport) — we position the Animate
-            // button with `fixed` (screen coords), and our CSS insets
-            // `.tl-container` by the sidebar width, so viewport coords and
-            // screen coords no longer match.
-            const pt = editor.pageToScreen({ x: shape.x, y: shape.y });
-            minX = Math.min(minX, pt.x);
-            minY = Math.min(minY, pt.y);
-            maxX = Math.max(maxX, pt.x + 100);
-          }
+        // Position the "Animate" button above the centre-top of the
+        // actual visible selection. We use editor.getShapePageBounds(id)
+        // so every shape type reports its correct VISIBLE rectangle —
+        // critical for directoor-arrow / line, whose shape.x / shape.y
+        // is just an anchor, not the drawn position. Using shape.x/y
+        // for these put the button at the wrong spot (often hidden or
+        // far from the arrow), which is what made the Animate button
+        // appear to be "missing" when arrows were in the selection.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity;
+        for (const id of ids) {
+          const bounds = editor.getShapePageBounds(id);
+          if (!bounds) continue;
+          // pageToScreen (NOT pageToViewport) — we position the Animate
+          // button with `fixed` (screen coords), and our CSS insets
+          // `.tl-container` by the sidebar width, so viewport coords and
+          // screen coords no longer match.
+          const topLeft = editor.pageToScreen({ x: bounds.x, y: bounds.y });
+          const topRight = editor.pageToScreen({ x: bounds.x + bounds.w, y: bounds.y });
+          minX = Math.min(minX, topLeft.x);
+          minY = Math.min(minY, topLeft.y);
+          maxX = Math.max(maxX, topRight.x);
+        }
+        if (minX !== Infinity) {
           setSelectionToolbarPos({
             x: Math.max(8, (minX + maxX) / 2 - 40),
             y: Math.max(8, minY - 44),

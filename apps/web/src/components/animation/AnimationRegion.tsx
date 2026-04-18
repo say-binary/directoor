@@ -271,9 +271,13 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, 
         const shape = editor.getShape(id);
         if (!shape) continue;
 
-        // For arrows, use the center of their page bounds
-        // For geo/other shapes, use their top-left position
-        const isArrow = shape.type === "arrow";
+        // For arrows (both tldraw native and our custom directoor-arrow),
+        // use the centre of the shape's page bounds. For directoor-arrow
+        // specifically, shape.x/shape.y is an abstract anchor decoupled
+        // from the visible geometry, so positioning a badge at shape.x,y
+        // landed it far from the drawn arrow (often off-screen). The
+        // page-bounds centre is the correct midpoint of the line itself.
+        const isArrow = shape.type === "arrow" || shape.type === "directoor-arrow";
         let pageX: number, pageY: number;
 
         if (isArrow) {
