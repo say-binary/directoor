@@ -6,6 +6,7 @@ import {
   atom, useValue, useEditor, DefaultStylePanel,
 } from "tldraw";
 import { DIRECTOOR_SHAPE_UTILS } from "./shapes/DirectoorShapes";
+import { DirectoorStylePanel } from "./DirectoorStylePanel";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -310,18 +311,46 @@ function PageChrome() {
 
 /**
  * ConditionalStylePanel — override tldraw's default StylePanel so it
- * only renders when at least one shape is selected. CSS in globals.css
- * pins its position to the top-right of the PAGE (not the viewport)
- * and below the floating toolbar.
+ * only renders when at least one shape is selected, and picks the right
+ * panel based on what's selected:
+ *
+ *  - Any Directoor custom shape (has `color`/`fill`/`dash` props)
+ *      → DirectoorStylePanel (stroke / fill / dash)
+ *  - Otherwise (pure tldraw shapes)
+ *      → DefaultStylePanel (tldraw's built-in styles)
+ *
+ * CSS in globals.css pins this panel to the top-right of the PAGE (not
+ * the viewport) and below the floating toolbar.
  */
 function ConditionalStylePanel() {
   const editor = useEditor();
-  const hasSelection = useValue(
-    "hasSelection",
-    () => editor.getSelectedShapeIds().length > 0,
+  const selectionInfo = useValue(
+    "selectionInfo",
+    () => {
+      const ids = editor.getSelectedShapeIds();
+      let hasDirectoor = false;
+      let hasAny = false;
+      for (const id of ids) {
+        const s = editor.getShape(id);
+        if (!s) continue;
+        hasAny = true;
+        const props = s.props as { color?: string; fill?: string; dash?: string } | undefined;
+        if (
+          props &&
+          (typeof props.color === "string" ||
+            typeof props.fill === "string" ||
+            typeof props.dash === "string")
+        ) {
+          hasDirectoor = true;
+          break; // one is enough to switch panel
+        }
+      }
+      return { hasAny, hasDirectoor };
+    },
     [editor],
   );
-  if (!hasSelection) return null;
+  if (!selectionInfo.hasAny) return null;
+  if (selectionInfo.hasDirectoor) return <DirectoorStylePanel />;
   return <DefaultStylePanel />;
 }
 

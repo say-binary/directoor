@@ -47,11 +47,17 @@ body,
   --color-background: #E2E8F0; /* slate-200 */
 }
 
-/* Pin tldraw's StylePanel to the top-right of the PAGE (not viewport).
-   --ds-page-right-x is published by DirectoorCanvas and tracks the page's
-   right edge in screen coords. top:72 keeps it below the floating toolbar
-   (toolbar top=16 + height~48 + gap=8). */
-.tlui-style-panel {
+/* Pin both style panels (tldraw's default + our custom Directoor one) to
+   the top-right of the PAGE, not the viewport. --ds-page-right-x is
+   published by DirectoorCanvas and tracks the page's right edge in
+   screen coords. top:72 keeps the panel below the floating PNG toolbar
+   (toolbar top=16 + height~48 + gap=8).
+
+   Tldraw wraps whatever you mount at the `StylePanel` slot in
+   `.tlui-layout__top__right`, which pins to the tl-container's right
+   edge. We need to escape that with position:fixed. */
+.tlui-style-panel,
+.directoor-style-panel {
   position: fixed !important;
   top: 72px !important;
   right: calc(100vw - var(--ds-page-right-x, 100vw) + 16px) !important;
