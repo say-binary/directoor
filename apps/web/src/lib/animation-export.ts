@@ -64,10 +64,17 @@ async function captureFrames(
   let heightPx = 0;
 
   try {
-    const totalSteps = region.sequence.length;
-    for (let step = 0; step < totalSteps; step++) {
-      // Reveal up to and including step `step`
-      const reveal = new Set(region.sequence.slice(0, step + 1));
+    // We emit ONE blank frame first (all shapes hidden), then one frame
+    // per step in the sequence. That matches the on-canvas playback,
+    // which starts from an empty stage and reveals shape-by-shape on
+    // each step. Without the blank frame, the exported GIF/WebM/HTML
+    // would start already showing step 1 instead of showing the "before"
+    // state — a subtle UX regression the user called out.
+    const totalFrames = region.sequence.length + 1;
+    for (let step = 0; step < totalFrames; step++) {
+      // Frame 0 = blank (revealCount = 0), Frame k = reveal sequence[0..k-1]
+      const revealCount = step; // 0 on first pass → empty set
+      const reveal = new Set(region.sequence.slice(0, revealCount));
       for (let i = 0; i < shapeIds.length; i++) {
         const oneBased = i + 1;
         setOpacity(shapeIds[i]!, reveal.has(oneBased) ? 1 : 0);
@@ -103,7 +110,7 @@ async function captureFrames(
       widthPx = bitmap.width;
       heightPx = bitmap.height;
 
-      opts.onProgress?.((step + 1) / (totalSteps * 2));
+      opts.onProgress?.((step + 1) / (totalFrames * 2));
     }
   } finally {
     restoreAll();

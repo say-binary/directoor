@@ -18,7 +18,9 @@ interface CanvasToolbarProps {
   hasAnimation?: boolean;
 }
 
-const STORAGE_KEY = "directoor.canvasToolbar.collapsed";
+// Bumped storage key so previous users (who had an expanded preference
+// saved) also get the new collapsed-by-default behaviour.
+const STORAGE_KEY = "directoor.canvasToolbar.collapsed.v2";
 
 /**
  * CanvasToolbar — floating toolbar pinned to the top-right of the
@@ -40,13 +42,16 @@ export function CanvasToolbar({
 }: CanvasToolbarProps) {
   const [busy, setBusy] = useState<null | "png" | "svg" | "copy">(null);
   const [justCopied, setJustCopied] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  // Default: collapsed. User can expand via the "Share" pill; their
+  // preference is then persisted. Only an explicit "0" in storage
+  // keeps it expanded on next load.
+  const [collapsed, setCollapsed] = useState(true);
 
   // Restore collapsed state from localStorage (client-side only).
   useEffect(() => {
     try {
       const v = window.localStorage.getItem(STORAGE_KEY);
-      if (v === "1") setCollapsed(true);
+      if (v === "0") setCollapsed(false);
     } catch { /* ignore */ }
   }, []);
 
@@ -96,7 +101,11 @@ export function CanvasToolbar({
     zIndex: 9994,
   };
 
-  // ─── Collapsed state: tiny chevron pill ─────────────────────────────
+  // ─── Collapsed state: "Share" pill with Download icon ───────────────
+  // This is the default. Single, obvious entry point for all export +
+  // share actions (PNG, SVG, Copy, GIF, Share) — one click expands the
+  // full toolbar. Keeps the canvas chrome out of the user's way until
+  // they actually need to download or share.
   if (collapsed) {
     return (
       <div
@@ -105,10 +114,12 @@ export function CanvasToolbar({
       >
         <button
           onClick={() => setCollapsed(false)}
-          title="Show toolbar"
-          className="flex items-center gap-1 rounded-xl px-2.5 py-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          title="Download / Copy / Share"
+          className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
         >
-          <ChevronLeft size={16} />
+          <Share2 size={14} />
+          <span>Share</span>
+          <ChevronLeft size={12} className="text-slate-400" />
         </button>
       </div>
     );

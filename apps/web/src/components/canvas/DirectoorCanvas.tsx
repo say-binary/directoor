@@ -7,6 +7,7 @@ import {
 } from "tldraw";
 import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles, TL_COLOR_HEX } from "./shapes/DirectoorShapes";
 import type { TLDefaultColorStyle } from "tldraw";
+import { X as CloseIcon, Sliders } from "lucide-react";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -17,10 +18,12 @@ import type { TLDefaultColorStyle } from "tldraw";
 //   * Vertically infinite downward (PAGE_HEIGHT is effectively a soft cap).
 //   * Right edge is user-draggable to widen the page (rightward only).
 //   * Per-canvas widened width is persisted in the canvas_state JSONB.
-// US Letter page at 96dpi = 8.5" × 11" → 816px × 1056px. We use 816 as
-// the initial page width so the canvas matches a familiar Word-doc look.
-// User can drag the right edge to widen.
-const INITIAL_PAGE_WIDTH = 816;
+// Default page is 1224px wide (≈150% of the previous 816px US-Letter
+// width). Wider default gives diagrams more breathing room without
+// forcing the user to drag the right edge on every new canvas. User
+// can still widen further via the right-edge handle, or the page
+// auto-grows on load to fit existing content.
+const INITIAL_PAGE_WIDTH = 1224;
 const MAX_PAGE_WIDTH = 10000;        // safety cap
 const PAGE_HEIGHT = 100000;          // effectively infinite
 
@@ -334,35 +337,37 @@ const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
 function LabelColorPicker() {
   const editor = useEditor();
 
-  // Read the shared labelColor across selected shapes (null = no directoor shape selected)
-  const labelColor = useValue<TLDefaultColorStyle | "mixed" | null>(
+  // Issue G: only show the text-color picker when the user is ACTIVELY
+  // editing text inside a Directoor shape (i.e. double-clicked into
+  // text-edit mode). Before, the picker appeared whenever a styled
+  // shape was merely selected, which was distracting and didn't match
+  // the intent of "text color" (you change it while editing text, not
+  // while just selecting the container).
+  const labelColor = useValue<TLDefaultColorStyle | null>(
     "labelColor",
     () => {
-      const ids = editor.getSelectedShapeIds();
-      let shared: TLDefaultColorStyle | null | "mixed" = null;
-      for (const id of ids) {
-        const shape = editor.getShape(id);
-        const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
-        if (!props || props.labelColor === undefined) continue;
-        if (shared === null) {
-          shared = props.labelColor;
-        } else if (shared !== props.labelColor) {
-          return "mixed";
-        }
-      }
-      return shared;
+      const editingId = editor.getEditingShapeId();
+      if (!editingId) return null;
+      const shape = editor.getShape(editingId);
+      const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
+      if (!props || props.labelColor === undefined) return null;
+      return props.labelColor;
     },
     [editor],
   );
 
-  // Pin just below the tldraw style panel — polled so it follows on scroll/resize.
+  // Issue F: the "Text color" panel must match the DefaultStylePanel's
+  // width exactly so the two don't look mis-aligned. We poll its
+  // bounding rect and mirror top + width.
   const [top, setTop] = useState(340);
+  const [width, setWidth] = useState<number | null>(null);
   useEffect(() => {
     const update = () => {
       const panel = document.querySelector(".tlui-style-panel");
       if (panel) {
         const rect = panel.getBoundingClientRect();
         setTop(rect.bottom + 6);
+        setWidth(rect.width);
       }
     };
     update();
@@ -373,15 +378,14 @@ function LabelColorPicker() {
   if (labelColor === null) return null;
 
   const setColor = (c: TLDefaultColorStyle) => {
-    const ids = editor.getSelectedShapeIds();
-    editor.batch(() => {
-      for (const id of ids) {
-        const shape = editor.getShape(id);
-        const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
-        if (!props || props.labelColor === undefined) continue;
-        editor.updateShape({ id, type: shape!.type, props: { ...props, labelColor: c } });
-      }
-    });
+    // The picker is only shown during text edit mode, so we update the
+    // single shape that's currently being edited.
+    const editingId = editor.getEditingShapeId();
+    if (!editingId) return;
+    const shape = editor.getShape(editingId);
+    const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
+    if (!props || props.labelColor === undefined) return;
+    editor.updateShape({ id: editingId, type: shape!.type, props: { ...props, labelColor: c } });
   };
 
   return (
@@ -395,11 +399,14 @@ function LabelColorPicker() {
         background: "white",
         borderRadius: 8,
         boxShadow: "0 2px 12px rgba(15,23,42,0.12)",
-        padding: "6px 8px",
+        padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        minWidth: 156,
+        // Width mirrors the tldraw DefaultStylePanel so the two stack
+        // visually as a single column. Fallback 156px covers first
+        // paint before the poll has measured the panel.
+        width: width ?? 156,
         // CRITICAL: tldraw's StylePanel slot container has pointer-events:none
         // so clicks on the surrounding grey area pass through to the canvas.
         // We need to re-enable pointer events on this panel so its buttons
@@ -455,26 +462,92 @@ function LabelColorPicker() {
 
 /**
  * ConditionalStylePanel — renders tldraw's DefaultStylePanel only when
- * at least one shape is selected. Because our Directoor shapes now
- * declare their style props (color/fill/dash) using tldraw's standard
- * DefaultColorStyle / DefaultFillStyle / DefaultDashStyle, the same
- * DefaultStylePanel works for both tldraw's native shapes AND our
- * custom shapes — exact same UI, no custom component needed.
+ * at least one shape is selected, and only if the user hasn't chosen
+ * to collapse it (Issue D). Because our Directoor shapes declare their
+ * style props using tldraw's standard enums, the same DefaultStylePanel
+ * works for native + custom shapes with no extra wiring.
  *
- * CSS in globals.css pins this panel to the top-right of the PAGE
- * (not the viewport) and below the floating toolbar.
+ * Collapse UX (Issue D): when the user clicks the × on the panel, the
+ * full style panel is hidden and a small "Styles" re-open pill appears
+ * in its place, so shapes that were sitting underneath the panel become
+ * directly clickable again. The collapsed state resets on each new
+ * selection so the panel re-appears for the next shape.
  */
 function ConditionalStylePanel() {
   const editor = useEditor();
-  const hasSelection = useValue(
-    "hasSelection",
-    () => editor.getSelectedShapeIds().length > 0,
+  const selectionIds = useValue(
+    "selectionIds",
+    () => editor.getSelectedShapeIds().join(","),
     [editor],
   );
+  const hasSelection = selectionIds.length > 0;
+  const [collapsed, setCollapsed] = useState(false);
+  // Reset collapsed whenever selection changes so the user sees styles
+  // for each new thing they select without needing to re-expand.
+  useEffect(() => {
+    setCollapsed(false);
+  }, [selectionIds]);
+
   if (!hasSelection) return null;
+
   return (
     <>
-      <DefaultStylePanel />
+      {!collapsed && <DefaultStylePanel />}
+      {!collapsed && (
+        <button
+          onClick={() => setCollapsed(true)}
+          title="Hide styles"
+          aria-label="Hide style panel"
+          style={{
+            position: "fixed",
+            top: 62,
+            right: "calc(100vw - var(--ds-page-right-x, 100vw) + 4px)",
+            zIndex: 9995,
+            width: 22,
+            height: 22,
+            borderRadius: "50%",
+            background: "white",
+            border: "1px solid #E2E8F0",
+            boxShadow: "0 2px 4px rgba(15,23,42,0.1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+            pointerEvents: "all",
+            padding: 0,
+          }}
+        >
+          <CloseIcon size={12} color="#64748B" />
+        </button>
+      )}
+      {collapsed && (
+        <button
+          onClick={() => setCollapsed(false)}
+          title="Show styles"
+          style={{
+            position: "fixed",
+            top: 72,
+            right: "calc(100vw - var(--ds-page-right-x, 100vw) + 16px)",
+            zIndex: 9994,
+            padding: "6px 10px",
+            borderRadius: 8,
+            background: "white",
+            border: "1px solid #E2E8F0",
+            boxShadow: "0 2px 4px rgba(15,23,42,0.08)",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+            fontSize: 11,
+            fontWeight: 500,
+            color: "#475569",
+            cursor: "pointer",
+            pointerEvents: "all",
+          }}
+        >
+          <Sliders size={12} />
+          Styles
+        </button>
+      )}
       <LabelColorPicker />
     </>
   );
@@ -652,14 +725,30 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
      *  it would otherwise extend past the right edge. Returns the same
      *  reference if no clamp was needed.
      *
-     *  IMPORTANT: Arrow shapes (both our directoor-arrow and tldraw's native
-     *  arrow) store their visual endpoints in props (startX/endX etc.) — not
-     *  in shape.x / shape.y. Clamping shape.x/y on arrows makes them jump
-     *  whenever a style is changed or the snapshot is loaded (Issues 1 & 2).
-     *  We skip arrows entirely: they live wherever the user placed them. */
+     *  Arrows are special: their visual position is stored in the
+     *  endpoint props (startX/startY/endX/endY) — shape.x / shape.y is
+     *  just an abstract anchor. So for directoor-arrow we clamp the
+     *  ENDPOINT props into the page instead of shape.x/y; that way
+     *  arrows can't be dragged outside the canvas but their position
+     *  also doesn't jump on style changes (previous bug was clamping
+     *  shape.x/y which had nothing to do with the visible geometry). */
     const ARROW_TYPES = new Set(["directoor-arrow", "arrow"]);
     const clampShape = (s: TLShape): TLShape => {
-      if (ARROW_TYPES.has(s.type)) return s;
+      if (s.type === "directoor-arrow") {
+        const props = s.props as {
+          startX: number; startY: number; endX: number; endY: number;
+        };
+        const pw = pageWidthRef.current;
+        const sX = Math.max(0, Math.min(pw, props.startX));
+        const sY = Math.max(0, props.startY);
+        const eX = Math.max(0, Math.min(pw, props.endX));
+        const eY = Math.max(0, props.endY);
+        if (sX === props.startX && sY === props.startY && eX === props.endX && eY === props.endY) return s;
+        return { ...s, props: { ...props, startX: sX, startY: sY, endX: eX, endY: eY } as typeof s.props };
+      }
+      // tldraw native arrow: leave untouched for now (legacy, rarely used
+      // in Directoor canvases — we replaced it with directoor-arrow).
+      if (s.type === "arrow") return s;
       const props = s.props as { w?: number };
       const pw = pageWidthRef.current;
       const hasW = typeof props.w === "number" && props.w > 0;
