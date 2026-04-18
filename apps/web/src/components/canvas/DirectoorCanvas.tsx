@@ -807,7 +807,11 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           let minX = Infinity, minY = Infinity, maxX = -Infinity;
           for (const shape of shapes) {
             if (!shape) continue;
-            const pt = editor.pageToViewport({ x: shape.x, y: shape.y });
+            // pageToScreen (NOT pageToViewport) — we position the Animate
+            // button with `fixed` (screen coords), and our CSS insets
+            // `.tl-container` by the sidebar width, so viewport coords and
+            // screen coords no longer match.
+            const pt = editor.pageToScreen({ x: shape.x, y: shape.y });
             minX = Math.min(minX, pt.x);
             minY = Math.min(minY, pt.y);
             maxX = Math.max(maxX, pt.x + 100);

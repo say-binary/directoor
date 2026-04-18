@@ -56,8 +56,11 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
       if (minX === Infinity) return;
 
       const pad = 24;
-      const topLeft = editor.pageToViewport({ x: minX - pad, y: minY - pad });
-      const bottomRight = editor.pageToViewport({ x: maxX + pad, y: maxY + pad });
+      // pageToScreen (NOT pageToViewport) because the region is rendered
+      // with `position: fixed` in screen coords. Our DirectoorCanvas CSS
+      // insets `.tl-container` by the sidebar width, so viewport != screen.
+      const topLeft = editor.pageToScreen({ x: minX - pad, y: minY - pad });
+      const bottomRight = editor.pageToScreen({ x: maxX + pad, y: maxY + pad });
       setScreenBounds({
         x: topLeft.x,
         y: topLeft.y,
@@ -253,7 +256,9 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete }: Animatio
           pageY = shape.y;
         }
 
-        const pt = editor.pageToViewport({ x: pageX, y: pageY });
+        // Screen coords (not viewport) — rendered with position:fixed;
+        // tl-container is CSS-inset by the sidebar width.
+        const pt = editor.pageToScreen({ x: pageX, y: pageY });
         positions.push({ num: i + 1, x: pt.x, y: pt.y, isArrow });
       }
       setBadgePositions(positions);

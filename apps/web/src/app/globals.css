@@ -57,3 +57,12 @@ body,
   right: calc(100vw - var(--ds-page-right-x, 100vw) + 16px) !important;
   z-index: 9993;
 }
+
+/* tldraw wraps the custom Background component in `.tl-background__wrapper`
+   which (unlike our inner div) has pointer-events: auto and zIndex: 100 —
+   it intercepts every click before it reaches the shapes underneath. Force
+   it transparent to pointer events so selecting / double-click / drag all
+   work normally. Our inner DeskBackground div is decorative only. */
+.tl-background__wrapper {
+  pointer-events: none !important;
+}

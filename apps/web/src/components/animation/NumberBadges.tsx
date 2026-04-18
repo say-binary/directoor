@@ -45,8 +45,10 @@ export function NumberBadges({ editor, store, animationSequence }: NumberBadgesP
       for (let i = 0; i < sorted.length; i++) {
         const obj = sorted[i]!;
 
-        // Convert canvas coordinates to screen coordinates via tldraw
-        const screenPoint = editor.pageToViewport({ x: obj.position.x, y: obj.position.y });
+        // Convert canvas coordinates to SCREEN coordinates (not viewport).
+        // Badges render with position:fixed and our CSS insets tl-container
+        // by the sidebar width, so viewport != screen.
+        const screenPoint = editor.pageToScreen({ x: obj.position.x, y: obj.position.y });
 
         newBadges.push({
           number: i + 1,
