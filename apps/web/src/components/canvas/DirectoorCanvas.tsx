@@ -585,6 +585,17 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   // Without this, the save effects fire on mount and overwrite the DB
   // with an empty snapshot before the load completes.
   const hasLoadedRef = useRef(false);
+
+  // CRITICAL: set while editor.store.loadStoreSnapshot() is running so the
+  // clamp side-effect handlers don't move shapes during restore.
+  //
+  // Why this matters (Issue 2 root cause): the saved pageWidth is applied
+  // AFTER loadStoreSnapshot fires its beforeCreate handlers. So every
+  // snapshot load ran the clamp against INITIAL_PAGE_WIDTH (816), which
+  // for wide canvases repositioned any shape with x+w > 816 back inside
+  // the initial page. The next debounced save then persisted the clamped
+  // positions — data loss on every refresh.
+  const isLoadingSnapshotRef = useRef(false);
   // Reset load flag + page width on canvas switch. The width snaps back
   // to the default until loadCanvas restores the saved value.
   useEffect(() => {
@@ -636,23 +647,25 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         : { ...s, x, y };
     };
 
-    // Normalize legacy-hex color/fill/dash into tldraw's enum before we
-    // clamp position — this way shapes from old saves / LLM / sidebar
-    // with hex strings get snapped to valid style enum values (e.g.
-    // "#3B82F6" → "blue"). Safe no-op if the shape isn't one of ours or
-    // the props are already enum-shaped.
-    const normalizeAndClamp = (s: TLShape): TLShape => {
+    // Normalize legacy-hex color/fill/dash into tldraw's enum always
+    // (safe during load — it only touches props, not x/y). Position
+    // clamping is skipped during snapshot load so saved shape positions
+    // are preserved even when they exceed the default page width; the
+    // saved pageWidth is applied to the camera after load.
+    const normalizeAndMaybeClamp = (s: TLShape): TLShape => {
       const normalized = normalizeDirectoorShapeStyles(s) as TLShape;
+      if (isLoadingSnapshotRef.current) return normalized;
       return clampShape(normalized);
     };
 
-    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => normalizeAndClamp(s));
-    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndClamp(next));
+    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => normalizeAndMaybeClamp(s));
+    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndMaybeClamp(next));
     // After-change backstop. If somehow a shape landed off-page despite
-    // the before-handlers, force-correct it. Skip if the before-clamp
-    // already fixed it (cheap shallow check). Arrows are exempt — see
-    // clampShape comment above.
+    // the before-handlers, force-correct it. Skip during snapshot load
+    // (data is trusted), and skip arrows (their visual position is
+    // endpoint-derived, not x/y-derived).
     const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
+      if (isLoadingSnapshotRef.current) return;
       if (ARROW_TYPES.has(next.type)) return;
       const corrected = clampShape(next);
       if (corrected !== next) {
@@ -888,9 +901,19 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
                   snapshot.store[key] = rec;
                 }
               }
-              editor.store.loadStoreSnapshot(saved.tldrawSnapshot as any);
+              // Set the load flag so our clamp side-effect handlers don't
+              // reposition shapes against the stale INITIAL_PAGE_WIDTH.
+              // The saved width is applied to the camera immediately after
+              // this restore completes.
+              isLoadingSnapshotRef.current = true;
+              try {
+                editor.store.loadStoreSnapshot(saved.tldrawSnapshot as any);
+              } finally {
+                isLoadingSnapshotRef.current = false;
+              }
             } catch (e) {
               console.warn("Could not restore canvas snapshot, starting fresh:", e);
+              isLoadingSnapshotRef.current = false;
             }
           }
 

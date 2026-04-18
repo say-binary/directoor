@@ -1808,6 +1808,42 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
     return arrowDefaults;
   }
 
+  /**
+   * onTranslate — propagate the drag delta to the arrow's stored endpoints.
+   *
+   * WHY this is needed: the arrow's VISUAL position is derived entirely
+   * from absolute page-coordinate endpoint props (startX/startY/endX/endY)
+   * via computeEndpoints(). When tldraw translates a shape, it only
+   * updates shape.x / shape.y — NOT the prop values. So after a drag,
+   * shape.x moves by dx but the endpoints stay anchored where they were,
+   * and computeEndpoints() still returns the original absolute positions.
+   * Result: the arrow visually snaps back to its original location on
+   * the next re-render (e.g. after a style change).
+   *
+   * Fix: when translate finishes, shift the endpoint props by the same
+   * delta so the stored data matches the drag. For bound arrows, the
+   * bindings override in computeEndpoints anyway, so this write is a
+   * no-op visually — but it keeps the stored data consistent.
+   */
+  override onTranslate = (
+    initial: DirectoorArrowShape,
+    current: DirectoorArrowShape,
+  ): DirectoorArrowShape | void => {
+    const dx = current.x - initial.x;
+    const dy = current.y - initial.y;
+    if (dx === 0 && dy === 0) return;
+    return {
+      ...current,
+      props: {
+        ...current.props,
+        startX: initial.props.startX + dx,
+        startY: initial.props.startY + dy,
+        endX: initial.props.endX + dx,
+        endY: initial.props.endY + dy,
+      },
+    };
+  };
+
   /** Resolve the actual page-coordinate endpoints, accounting for bindings. */
   computeEndpoints(shape: DirectoorArrowShape): { sx: number; sy: number; ex: number; ey: number } {
     const editor = this.editor;
