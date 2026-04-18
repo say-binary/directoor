@@ -217,6 +217,27 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, 
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, []);
 
+  // When a region stops being the active one while it's mid-animation
+  // (shapes hidden, currentStep advanced), restore all its shapes so the
+  // canvas doesn't show a half-stepped region sitting there with some of
+  // its shapes invisible. This is why the user saw "other region shapes
+  // disappear" — a previously active region was stuck mid-reveal when the
+  // user switched to another region.
+  useEffect(() => {
+    if (isActive) return;
+    if (isPlaying) {
+      stopAnimation();
+      return;
+    }
+    if (currentStep !== -1) {
+      showAll();
+      setCurrentStep(-1);
+    }
+    // Intentionally not including currentStep/isPlaying/showAll/stopAnimation
+    // in deps — we only want this to fire when isActive flips to false.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive]);
+
   // ─── Sequence Editor ─────────────────────────────────────────
 
   const applySequence = useCallback(() => {
@@ -281,19 +302,27 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, 
 
   const hasSequence = region.sequence.length > 0;
 
+  // Border classes: ACTIVE state takes priority and paints a solid blue
+  // frame + soft glow so the user can see at a glance which region will
+  // respond to the arrow key. Other states fall back to the previous UI.
+  const borderClasses = isPlaying
+    ? "border-blue-500 bg-blue-50/15 shadow-xl shadow-blue-300/60 border-solid"
+    : isActive
+      ? "border-blue-500 bg-blue-50/10 shadow-lg shadow-blue-200/50 border-solid ring-2 ring-blue-200"
+      : region.isEditMode
+        ? "border-blue-300 bg-blue-50/5 border-dashed"
+        : hasSequence
+          ? "border-slate-200 bg-transparent border-dashed"
+          : "border-slate-200 bg-transparent border-dashed opacity-50";
+
   return (
     <>
-      {/* Persistent bounding box */}
+      {/* Persistent bounding box — pointer-events: none so clicks on the
+         INSIDE pass through to the shape layer. Clicks on the EDGES are
+         picked up by the 4 thin border strips below, which call
+         onActivate() to promote this region to the active one. */}
       <div
-        className={`pointer-events-none absolute z-[9997] rounded-lg border-2 transition-all duration-300 ${
-          isPlaying
-            ? "border-blue-400 bg-blue-50/10 shadow-lg shadow-blue-200/50"
-            : region.isEditMode
-              ? "border-blue-300 bg-blue-50/5 border-dashed"
-              : hasSequence
-                ? "border-slate-200 bg-transparent border-dashed"
-                : "border-slate-200 bg-transparent border-dashed opacity-50"
-        }`}
+        className={`pointer-events-none absolute z-[9997] rounded-lg border-2 transition-all duration-300 ${borderClasses}`}
         style={{
           left: screenBounds.x,
           top: screenBounds.y,
@@ -301,6 +330,43 @@ export function AnimationRegion({ editor, region, onUpdate, onDelete, isActive, 
           height: screenBounds.h,
         }}
       />
+
+      {/* Invisible clickable border frame. Four thin strips around the
+         bounding-box perimeter that call onActivate() when clicked. The
+         interior of the region stays pointer-events-transparent so shapes
+         underneath remain individually selectable. */}
+      {hasSequence && !region.isEditMode && (() => {
+        const edge = 10; // px-wide click strip
+        const bandStyle: React.CSSProperties = {
+          position: "fixed",
+          cursor: "pointer",
+          zIndex: 9997,
+        };
+        return (
+          <>
+            <div
+              onClick={onActivate}
+              title="Activate this animation region"
+              style={{ ...bandStyle, left: screenBounds.x - edge / 2, top: screenBounds.y - edge / 2, width: screenBounds.w + edge, height: edge }}
+            />
+            <div
+              onClick={onActivate}
+              title="Activate this animation region"
+              style={{ ...bandStyle, left: screenBounds.x - edge / 2, top: screenBounds.y + screenBounds.h - edge / 2, width: screenBounds.w + edge, height: edge }}
+            />
+            <div
+              onClick={onActivate}
+              title="Activate this animation region"
+              style={{ ...bandStyle, left: screenBounds.x - edge / 2, top: screenBounds.y - edge / 2, width: edge, height: screenBounds.h + edge }}
+            />
+            <div
+              onClick={onActivate}
+              title="Activate this animation region"
+              style={{ ...bandStyle, left: screenBounds.x + screenBounds.w - edge / 2, top: screenBounds.y - edge / 2, width: edge, height: screenBounds.h + edge }}
+            />
+          </>
+        );
+      })()}
 
       {/* Number badges (edit mode only) */}
       {region.isEditMode && badgePositions.map((badge) => {
