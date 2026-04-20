@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { X, Loader2, Film, Image as ImageIcon, Download, Presentation } from "lucide-react";
+import { X, Loader2, Film, Image as ImageIcon, Download, Presentation, FileType2 } from "lucide-react";
 import type { Editor } from "tldraw";
 import type { AnimationRegionData } from "../animation/AnimationRegion";
 import { exportRegionAsGif, exportRegionAsWebm, exportRegionAsSlides } from "@/lib/animation-export";
+import { exportRegionAsPPTX } from "@/lib/pptx-export";
 
 interface AnimationExportDialogProps {
   editor: Editor;
@@ -31,7 +32,7 @@ export function AnimationExportDialog({ editor, regions, initialRegionId, onClos
     }
     return regions[0]?.id ?? null;
   });
-  const [format, setFormat] = useState<"gif" | "webm" | "slides">("gif");
+  const [format, setFormat] = useState<"gif" | "webm" | "slides" | "pptx">("gif");
   const [stepDuration, setStepDuration] = useState(800);
   const [loop, setLoop] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -58,10 +59,14 @@ export function AnimationExportDialog({ editor, regions, initialRegionId, onClos
           loop,
           onProgress: setProgress,
         });
-      } else {
+      } else if (format === "slides") {
         await exportRegionAsSlides(editor, region, {
           stepDurationMs: stepDuration,
           loop,
+          onProgress: setProgress,
+        });
+      } else {
+        await exportRegionAsPPTX(editor, region, {
           onProgress: setProgress,
         });
       }
@@ -109,7 +114,7 @@ export function AnimationExportDialog({ editor, regions, initialRegionId, onClos
               </select>
             </label>
 
-            <div className="mb-3 grid grid-cols-3 gap-2">
+            <div className="mb-3 grid grid-cols-2 gap-2">
               <button
                 onClick={() => setFormat("gif")}
                 disabled={busy}
@@ -147,40 +152,62 @@ export function AnimationExportDialog({ editor, regions, initialRegionId, onClos
                 <Presentation size={13} />
                 Slides
               </button>
+              <button
+                onClick={() => setFormat("pptx")}
+                disabled={busy}
+                className={`flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                  format === "pptx"
+                    ? "border-blue-300 bg-blue-50 text-blue-700"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+                title="Download a .pptx with click-triggered entrance animations on real PowerPoint shapes."
+              >
+                <FileType2 size={13} />
+                PPTX
+              </button>
             </div>
             {format === "slides" && (
               <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
                 Self-contained HTML with full playback: <kbd className="rounded bg-slate-200 px-1 font-mono">→</kbd>/<kbd className="rounded bg-slate-200 px-1 font-mono">←</kbd> step, <kbd className="rounded bg-slate-200 px-1 font-mono">Space</kbd> play/pause, <kbd className="rounded bg-slate-200 px-1 font-mono">L</kbd> toggle loop. Works offline in any browser and can be dropped into Slack/Notion/email as a single attachment.
               </p>
             )}
+            {format === "pptx" && (
+              <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 leading-relaxed">
+                Real <b>.pptx</b>: one slide with editable PowerPoint shapes, each with a click-triggered entrance animation. In Slide Show mode (F5) press <kbd className="rounded bg-slate-200 px-1 font-mono">→</kbd> to reveal the next shape — same behaviour as the canvas. Shape sizes and layout are preserved exactly. Copy the slide (<kbd className="rounded bg-slate-200 px-1 font-mono">⌘A</kbd>/<kbd className="rounded bg-slate-200 px-1 font-mono">Ctrl+A</kbd> → <kbd className="rounded bg-slate-200 px-1 font-mono">⌘C</kbd>) and paste into any existing deck.
+              </p>
+            )}
 
-            <label className="mb-3 block">
-              <span className="mb-1 block text-xs font-medium text-slate-600">
-                Step duration: {stepDuration}ms
-              </span>
-              <input
-                type="range"
-                min={200}
-                max={2000}
-                step={100}
-                value={stepDuration}
-                onChange={(e) => setStepDuration(Number(e.target.value))}
-                disabled={busy}
-                className="w-full accent-blue-500"
-              />
-            </label>
+            {format !== "pptx" && (
+              <>
+                <label className="mb-3 block">
+                  <span className="mb-1 block text-xs font-medium text-slate-600">
+                    Step duration: {stepDuration}ms
+                  </span>
+                  <input
+                    type="range"
+                    min={200}
+                    max={2000}
+                    step={100}
+                    value={stepDuration}
+                    onChange={(e) => setStepDuration(Number(e.target.value))}
+                    disabled={busy}
+                    className="w-full accent-blue-500"
+                  />
+                </label>
 
-            <label className="mb-4 flex items-center gap-2 text-sm text-slate-700">
-              <input
-                type="checkbox"
-                checked={loop}
-                onChange={(e) => setLoop(e.target.checked)}
-                disabled={busy}
-                className="accent-blue-500"
-              />
-              Loop forever {format === "webm" && <span className="text-xs text-slate-400">(WebM ignores loop flag — repeat in browser)</span>}
-              {format === "slides" && <span className="text-xs text-slate-400">(HTML slideshow loops back to step 1)</span>}
-            </label>
+                <label className="mb-4 flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={loop}
+                    onChange={(e) => setLoop(e.target.checked)}
+                    disabled={busy}
+                    className="accent-blue-500"
+                  />
+                  Loop forever {format === "webm" && <span className="text-xs text-slate-400">(WebM ignores loop flag — repeat in browser)</span>}
+                  {format === "slides" && <span className="text-xs text-slate-400">(HTML slideshow loops back to step 1)</span>}
+                </label>
+              </>
+            )}
 
             {busy ? (
               <div className="flex items-center justify-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-xs text-slate-600">
@@ -194,7 +221,7 @@ export function AnimationExportDialog({ editor, regions, initialRegionId, onClos
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:opacity-40"
               >
                 <Download size={14} />
-                Export {format === "slides" ? "Slides" : format.toUpperCase()}
+                Export {format === "slides" ? "Slides" : format === "pptx" ? "PPTX" : format.toUpperCase()}
               </button>
             )}
 
