@@ -1198,36 +1198,17 @@ export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape>
     const rHole = rOuter * 0.22;
     const d = gearPath(cx, cy, rInner, toothDepth, 8);
 
-    // When animated, wrap the gear's geometry in a <g> that spins via
-    // inline CSS animation. We set transform-origin in PIXELS on the
-    // <g>'s inline style — this sidesteps the `transform-box: fill-box`
-    // quirks (Firefox/Safari have historically miscomputed fill-box on
-    // <g> elements, so the gear ends up rotating around (0,0) of the SVG
-    // rather than the gear center). Pixel transform-origin on an SVG
-    // <g> resolves against the SVG viewport, which is exactly what we
-    // want: (cx, cy) is the gear center.
-    const gearBody = (
-      <>
-        <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
-        <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
-      </>
-    );
+    // The spin animation (when enabled via meta.animated) is applied
+    // externally by the AnimatedShapesStyle injector in DirectoorCanvas,
+    // targeting the SVG element via data-shape-id. No per-shape logic
+    // required here; we just render the geometry.
+    void animated; // referenced to keep lint quiet
 
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
         <svg width={w} height={h} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
-          {animated ? (
-            <g
-              style={{
-                transformOrigin: `${cx}px ${cy}px`,
-                animation: "directoor-spin 6s linear infinite",
-              }}
-            >
-              {gearBody}
-            </g>
-          ) : (
-            gearBody
-          )}
+          <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
+          <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
         </svg>
         <DirectoorShapeLabel shape={shape} bottomAnchored />
       </HTMLContainer>
@@ -2564,24 +2545,19 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
           strokeWidth={Math.max(8, strokeWidth + 4)}
           style={{ pointerEvents: "stroke" }}
         />
-        {/* Visible path. When animated, we drive stroke-dashoffset via an
-            inline CSS animation — inline style is more reliable than a
-            class, because class-based animations can lose on CSS cascade
-            ordering issues and because tldraw's <HTMLContainer> wraps
-            shape content in several layers that can disturb specificity. */}
+        {/* Visible path. Animation is now applied externally via the
+            AnimatedShapesStyle injector (DirectoorCanvas), which emits
+            CSS rules keyed on data-shape-id. This works uniformly across
+            native arrow, native line, and directoor-arrow. */}
         <path
           d={pathD}
           fill="none"
           stroke={color}
           strokeWidth={strokeWidth}
-          strokeDasharray={shape.props.animated ? "8 4" : dashArray}
-          strokeLinecap={shape.props.animated ? "butt" : "round"}
+          strokeDasharray={dashArray}
+          strokeLinecap="round"
           strokeLinejoin="round"
-          style={
-            shape.props.animated
-              ? { pointerEvents: "stroke", animation: "directoor-flow 0.9s linear infinite" }
-              : { pointerEvents: "stroke" }
-          }
+          style={{ pointerEvents: "stroke" }}
         />
         {endHead === "arrow" && (
           <path d={headPath(lex, ley, angleEnd)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />

@@ -314,6 +314,7 @@ function PageChrome() {
     <>
       <PagePositionPublisher />
       <PageEdges />
+      <AnimatedShapesStyle />
     </>
   );
 }
@@ -348,6 +349,24 @@ const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
  * the two visually animated types, but any Directoor styled shape
  * carries the prop for future use. Not shown for native tldraw shapes.
  */
+// Shape types where the Animate toggle has a visible effect:
+//   - directoor-arrow / arrow / line / draw  → flowing stroke-dashoffset
+//   - directoor-gear                         → spinning around center
+// Everything else (rectangles, text, etc.) doesn't get the toggle.
+const ANIMATABLE_TYPES = new Set([
+  "directoor-arrow", "arrow", "line", "draw", "directoor-gear",
+]);
+
+/** Read the "animated" flag for a shape — meta.animated wins, props.animated
+ *  (legacy directoor shapes only) is the fallback. */
+function readAnimated(shape: { meta?: Record<string, unknown>; props?: unknown } | undefined): boolean {
+  if (!shape) return false;
+  const meta = (shape.meta ?? {}) as { animated?: unknown };
+  if (typeof meta.animated === "boolean") return meta.animated;
+  const props = (shape.props ?? {}) as { animated?: unknown };
+  return typeof props.animated === "boolean" ? props.animated : false;
+}
+
 function AnimateToggle() {
   const editor = useEditor();
 
@@ -360,11 +379,11 @@ function AnimateToggle() {
       let any = false;
       for (const id of ids) {
         const shape = editor.getShape(id);
-        const props = shape?.props as { animated?: boolean } | undefined;
-        if (!props || typeof props.animated !== "boolean") continue;
+        if (!shape || !ANIMATABLE_TYPES.has(shape.type)) continue;
         any = true;
-        if (some === null) some = props.animated;
-        else if (some !== props.animated) mixed = true;
+        const v = readAnimated(shape);
+        if (some === null) some = v;
+        else if (some !== v) mixed = true;
       }
       if (!any) return null;
       return { on: some ?? false, mixed };
@@ -396,9 +415,15 @@ function AnimateToggle() {
     editor.run(() => {
       for (const id of ids) {
         const shape = editor.getShape(id);
-        const props = shape?.props as { animated?: boolean } | undefined;
-        if (!props || typeof props.animated !== "boolean") continue;
-        editor.updateShape({ id, type: shape!.type, props: { ...props, animated: next } });
+        if (!shape || !ANIMATABLE_TYPES.has(shape.type)) continue;
+        // Write to meta (works for native AND directoor shapes with no
+        // schema change). Leave legacy props.animated alone so old saves
+        // keep animating until they're re-toggled.
+        editor.updateShape({
+          id,
+          type: shape.type,
+          meta: { ...(shape.meta ?? {}), animated: next },
+        });
       }
     });
   };
@@ -697,6 +722,77 @@ function ConditionalStylePanel() {
   );
 }
 
+/**
+ * AnimatedShapesStyle — emits a single <style> tag whose content reflects
+ * every shape currently flagged as `meta.animated === true`. Rules target
+ * the shape's outer DOM wrapper via `data-shape-id` (which tldraw sets on
+ * every shape container) so we don't need each shape util to know about
+ * the animation.
+ *
+ * Two animation families, per shape type:
+ *   • directoor-gear  → rotate the inner <svg> around its center
+ *   • anything else (arrow, line, draw, directoor-arrow) → flowing
+ *     stroke-dashoffset on all <path> strokes inside the shape
+ *
+ * Recomputes whenever selection or the shape store changes (cheap — it's
+ * a single style-tag update, never a React tree re-render).
+ */
+function AnimatedShapesStyle() {
+  const editor = useEditor();
+  const css = useValue(
+    "animated-shapes-css",
+    () => {
+      const shapes = editor.getCurrentPageShapes();
+      const rules: string[] = [];
+      for (const s of shapes) {
+        if (!ANIMATABLE_TYPES.has(s.type)) continue;
+        if (!readAnimated(s)) continue;
+        const id = s.id;
+        if (s.type === "directoor-gear") {
+          // Spin the SVG — its own viewport gives reliable centring.
+          rules.push(
+            `[data-shape-id="${id}"] svg { transform-origin: 50% 50%; animation: directoor-spin 6s linear infinite; }`,
+          );
+        } else {
+          // Flowing dashed path for arrow / line / draw / directoor-arrow.
+          //
+          // We target `path[stroke-width]`. This is the reliable marker
+          // for the *shaft* of the shape across all variants:
+          //   - native arrow:   <path stroke-width="2" d="M 0 0 L 220 0">
+          //     (stroke color is inherited from parent <g>, so `[stroke]`
+          //      doesn't match — that's why the previous selector only
+          //      animated lines, not arrows.)
+          //   - native line:    <path stroke-width="4" d="M 0 0 L 220 0">
+          //   - directoor-arrow: <path stroke="…" stroke-width="2">
+          // Arrowheads are filled shapes with NO stroke-width, so they
+          // stay solid (which looks correct — only the shaft should flow).
+          // Clip-path <path>s inside <defs> also lack stroke-width.
+          rules.push(
+            `[data-shape-id="${id}"] path[stroke-width] {
+               stroke-dasharray: 8 4 !important;
+               animation: directoor-flow 0.9s linear infinite !important;
+             }`,
+          );
+        }
+      }
+      return rules.join("\n");
+    },
+    [editor],
+  );
+
+  useEffect(() => {
+    let tag = document.getElementById("directoor-animated-styles") as HTMLStyleElement | null;
+    if (!tag) {
+      tag = document.createElement("style");
+      tag.id = "directoor-animated-styles";
+      document.head.appendChild(tag);
+    }
+    tag.textContent = css;
+  }, [css]);
+
+  return null;
+}
+
 // Hide tldraw UI elements we don't need; mount the chrome.
 // Removed:
 //   - MenuPanel (top-left hamburger) — duplicates Sidebar + shortcuts
@@ -803,6 +899,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
 
   const handleMount = useCallback((editorInstance: Editor) => {
     setEditor(editorInstance);
+    // Expose editor on window in dev for debugging + automated testing.
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as { editor: Editor }).editor = editorInstance;
+    }
     // Grid is NOT enabled — the page (PageBackground) paints its own dot
     // grid so grid dots only appear on the page, not on the surrounding
     // grey desk. Snap-to-grid still works at tldraw's default behavior.
@@ -1024,146 +1124,16 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       }
     });
 
-    // ─── Arrow conversion ─────────────────────────────────────────
-    // Convert every tldraw NATIVE arrow created by the user via the
-    // arrow tool into our directoor-arrow with path="straight". This
-    // gives users the three draggable bend handles (bend1/bend2/bend3)
-    // as soon as they draw an arrow — matching the #2b feature
-    // request. We intentionally DO NOT convert arrows loaded from
-    // saved snapshots (isLoadingSnapshotRef guard); existing native
-    // arrows continue to render as they were saved.
-    //
-    // TIMING (critical — previous bug: "expected handles for arrow"
-    // crash). The arrow tool creates the shape at pointerDown and then
-    // calls updateArrowShapeEndHandle on every pointerMove until
-    // pointerUp. If we convert inside afterCreate (even via a
-    // microtask), tldraw's next pointerMove finds the native arrow
-    // missing and throws. So we DEBOUNCE the conversion: schedule it
-    // with a timer, and every time the shape changes (i.e. user is
-    // still dragging), reset the timer. When the shape has been idle
-    // for 250ms AND the arrow tool is no longer active, convert.
-    //
-    // This also means clicking the arrow tool and immediately releasing
-    // (a no-drag click) still converts after 250ms of idle, which is
-    // fine — the resulting 0-length directoor-arrow can be extended or
-    // deleted by the user.
-    const pendingArrowConversions = new Map<string, ReturnType<typeof setTimeout>>();
-    const convertArrow = (id: TLShapeId) => {
-      const native = editor.getShape(id);
-      if (!native || native.type !== "arrow") return;
-      const nativeProps = native.props as {
-        start: { x?: number; y?: number };
-        end: { x?: number; y?: number };
-        color?: string;
-        size?: string;
-        dash?: string;
-        text?: string;
-      };
-      // Skip "zero-length" arrows (pointer-down without drag). Keep the
-      // native shape so the user can still interact with it; tldraw
-      // deletes it on the next click outside anyway.
-      const sxLocal = nativeProps.start?.x ?? 0;
-      const syLocal = nativeProps.start?.y ?? 0;
-      const exLocal = nativeProps.end?.x ?? 0;
-      const eyLocal = nativeProps.end?.y ?? 0;
-      if (Math.hypot(exLocal - sxLocal, eyLocal - syLocal) < 2) return;
+    // NOTE: we no longer convert native arrows into directoor-arrow.
+    // Previous attempts caused "expected handles for arrow" crashes
+    // (conversion raced tldraw's drag finalisation) and broke bindings.
+    // Native arrow stays 100% native — users who want multi-bend can
+    // use the line tool, which already supports multiple bend points
+    // via tldraw's polyline handles. Animation is added via meta.animated
+    // + an injected <style> block (see AnimatedShapesStyle below), which
+    // works uniformly on native arrow, native line, and directoor shapes.
 
-      // Absolute page coordinates for our directoor-arrow.
-      const startX = native.x + sxLocal;
-      const startY = native.y + syLocal;
-      const endX = native.x + exLocal;
-      const endY = native.y + eyLocal;
-
-      // Preserve binding targets if the user snapped the arrow ends
-      // onto existing shapes. getBindingsFromShape returns the
-      // arrow's "arrow" bindings (start/end terminals).
-      let fromShapeId = "";
-      let toShapeId = "";
-      try {
-        const bindings = editor.getBindingsFromShape(native.id, "arrow");
-        for (const b of bindings) {
-          const bprops = b.props as { terminal?: "start" | "end" };
-          if (bprops.terminal === "start") fromShapeId = b.toId as unknown as string;
-          else if (bprops.terminal === "end") toShapeId = b.toId as unknown as string;
-        }
-      } catch { /* binding lookup can throw for unbound arrows */ }
-
-      const newId = createShapeId();
-      try {
-        editor.run(() => {
-          editor.createShape({
-            id: newId,
-            type: "directoor-arrow",
-            x: 0,
-            y: 0,
-            props: {
-              startX, startY, endX, endY,
-              fromShapeId, toShapeId,
-              fromAnchor: "auto",
-              toAnchor: "auto",
-              color: hexToTldrawColor(nativeProps.color ?? "grey"),
-              strokeWidth: 2,
-              dash: nativeProps.dash === "dashed" || nativeProps.dash === "dotted"
-                ? nativeProps.dash
-                : "solid",
-              startHead: "none",
-              endHead: "arrow",
-              path: "straight",
-              squiggleOffset: 0,
-              bend1Offset: 0,
-              bend2Offset: 0,
-              bend3Offset: 0,
-              animated: false,
-              label: nativeProps.text ?? "",
-              labelPosition: 0.5,
-            },
-          });
-          editor.deleteShape(native.id);
-          editor.select(newId);
-        });
-      } catch (err) {
-        console.warn("[Directoor] arrow conversion failed", err);
-      }
-    };
-
-    // Schedule a conversion for `id`, or reset the existing timer if the
-    // shape is still being actively modified. Waits until the shape has
-    // been idle 250ms AND the arrow tool is no longer active.
-    const scheduleArrowConversion = (id: TLShapeId) => {
-      const existing = pendingArrowConversions.get(id);
-      if (existing) clearTimeout(existing);
-      const t = setTimeout(() => {
-        pendingArrowConversions.delete(id);
-        // If the arrow tool is still active, the user may be about to
-        // draw another arrow — still safe to convert THIS one since it
-        // was created strictly before the current drag. But defer one
-        // more frame to let any final state-settling happen.
-        queueMicrotask(() => convertArrow(id));
-      }, 250);
-      pendingArrowConversions.set(id, t);
-    };
-
-    const u4 = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
-      if (isLoadingSnapshotRef.current) return;
-      if (shape.type !== "arrow") return;
-      scheduleArrowConversion(shape.id);
-    });
-
-    // Every mid-drag change on an arrow with a pending conversion resets
-    // the 250ms idle timer — so we only convert once the user has
-    // actually stopped dragging.
-    const u5 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
-      if (isLoadingSnapshotRef.current) return;
-      if (next.type !== "arrow") return;
-      if (!pendingArrowConversions.has(next.id)) return;
-      scheduleArrowConversion(next.id);
-    });
-
-    return () => {
-      u1(); u2(); u3(); u4(); u5();
-      for (const t of pendingArrowConversions.values()) clearTimeout(t);
-      pendingArrowConversions.clear();
-    };
+    return () => { u1(); u2(); u3(); };
   }, [editor]);
 
   // ─── React to page-width changes (from drag handle or load) ─────────
