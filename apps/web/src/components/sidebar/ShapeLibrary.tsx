@@ -48,35 +48,21 @@ export const ARCHETYPES: Archetype[] = [
   {
     iconShape: "cylinder",
     displayName: "Cylinder",
-    exampleUses: ["database", "postgres", "mysql", "mongodb", "redis", "cache", "storage", "s3", "snowflake", "bigquery", "vector db", "queue", "topic", "kafka topic"],
+    exampleUses: ["database", "postgres", "mysql", "mongodb", "redis", "cache", "storage", "s3", "snowflake", "bigquery", "vector db", "topic", "kafka topic"],
     defaultWidth: 140, defaultHeight: 80,
     defaultStroke: "#3B82F6", defaultFill: "#EFF6FF",
   },
   {
-    iconShape: "hexagon",
-    displayName: "Hexagon",
-    exampleUses: ["microservice", "service mesh", "service", "module", "domain"],
-    defaultWidth: 130, defaultHeight: 110,
-    defaultStroke: "#16A34A", defaultFill: "#F0FDF4",
-  },
-  {
     iconShape: "actor",
-    displayName: "User",
+    displayName: "Human",
     exampleUses: ["user", "actor", "person", "customer", "admin", "end user", "human"],
     defaultWidth: 100, defaultHeight: 110,
     defaultStroke: "#E11D48", defaultFill: "#FFF1F2",
   },
   {
-    iconShape: "cloud",
-    displayName: "Cloud",
-    exampleUses: ["external", "cloud service", "third-party", "cdn", "oauth provider", "dns", "stripe", "twilio"],
-    defaultWidth: 150, defaultHeight: 85,
-    defaultStroke: "#94A3B8", defaultFill: "#F8FAFC",
-  },
-  {
     iconShape: "document",
-    displayName: "Document",
-    exampleUses: ["document", "log", "file", "report", "jwt", "policy", "webhook payload"],
+    displayName: "File",
+    exampleUses: ["file", "document", "log", "report", "jwt", "policy", "webhook payload"],
     defaultWidth: 110, defaultHeight: 130,
     defaultStroke: "#475569", defaultFill: "#F1F5F9",
   },
@@ -88,25 +74,11 @@ export const ARCHETYPES: Archetype[] = [
     defaultStroke: "#D97706", defaultFill: "#FEF3C7",
   },
   {
-    iconShape: "rectangle",
-    displayName: "Rectangle",
-    exampleUses: ["service", "api gateway", "load balancer", "function", "lambda", "worker", "container", "generic box"],
-    defaultWidth: 140, defaultHeight: 80,
-    defaultStroke: "#334155", defaultFill: "#FFFFFF",
-  },
-  {
-    iconShape: "circle",
-    displayName: "Circle",
-    exampleUses: ["event", "state", "endpoint"],
-    defaultWidth: 100, defaultHeight: 100,
-    defaultStroke: "#CBD5E1", defaultFill: "#F8FAFC",
-  },
-  {
-    iconShape: "diamond",
-    displayName: "Decision",
-    exampleUses: ["decision", "condition", "if", "branch"],
-    defaultWidth: 110, defaultHeight: 100,
-    defaultStroke: "#D97706", defaultFill: "#FEF3C7",
+    iconShape: "queue",
+    displayName: "Queue",
+    exampleUses: ["queue", "fifo", "buffer", "message queue", "task queue", "inbox", "outbox", "topic", "stream"],
+    defaultWidth: 170, defaultHeight: 60,
+    defaultStroke: "#0EA5E9", defaultFill: "#F0F9FF",
   },
   {
     iconShape: "pill",
@@ -123,25 +95,11 @@ export const ARCHETYPES: Archetype[] = [
     defaultStroke: "#1D4ED8", defaultFill: "#EFF6FF",
   },
   {
-    iconShape: "arrow",
-    displayName: "Arrow",
-    exampleUses: ["connection", "edge", "data flow", "relationship"],
+    iconShape: "squiggle",
+    displayName: "Squiggle",
+    exampleUses: ["wavy arrow", "loose connection", "flowing", "fuzzy link", "irregular"],
     defaultWidth: 200, defaultHeight: 0,
     defaultStroke: "#334155", defaultFill: "#FFFFFF",
-  },
-  {
-    iconShape: "line",
-    displayName: "Line",
-    exampleUses: ["plain line", "separator", "divider", "undirected"],
-    defaultWidth: 200, defaultHeight: 0,
-    defaultStroke: "#334155", defaultFill: "#FFFFFF",
-  },
-  {
-    iconShape: "text",
-    displayName: "Text",
-    exampleUses: ["label", "annotation", "caption", "title", "note"],
-    defaultWidth: 140, defaultHeight: 32,
-    defaultStroke: "#0F172A", defaultFill: "transparent",
   },
 ];
 
@@ -315,6 +273,48 @@ export function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
           <rect x={1} y={8} width={w - 12} height={h - 12} rx={2.5} fill={fill} stroke={color} strokeWidth={1.8} />
         </svg>
       );
+    case "queue": {
+      // Three queued items inside a rounded container, with a thin
+      // outgoing arrow on the right to convey FIFO / flow-through.
+      const itemCount = 3;
+      const pad = 4;
+      const arrowTip = 6;
+      const containerW = w - arrowTip - pad;
+      const itemW = (containerW - pad * 2) / itemCount - 2;
+      const itemH = h - 10;
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <rect x={1} y={5} width={containerW} height={h - 10} rx={4} fill={fill} stroke={color} strokeWidth={1.8} />
+          {Array.from({ length: itemCount }).map((_, i) => (
+            <rect
+              key={i}
+              x={pad + i * (itemW + 2)}
+              y={5 + (h - 10 - itemH) / 2}
+              width={itemW}
+              height={itemH}
+              rx={1.5}
+              fill="none"
+              stroke={color}
+              strokeOpacity={0.5}
+              strokeWidth={1}
+            />
+          ))}
+          <line x1={containerW + 1} y1={h / 2} x2={w - 2} y2={h / 2} stroke={color} strokeWidth={1.5} />
+          <polygon points={`${w - arrowTip - 1},${h / 2 - 3} ${w - 2},${h / 2} ${w - arrowTip - 1},${h / 2 + 3}`} fill={color} />
+        </svg>
+      );
+    }
+    case "squiggle": {
+      // Cubic bezier squiggle with an arrowhead — communicates the
+      // shape is a wavy/editable connector.
+      const path = `M 4,${h / 2} C ${w * 0.3},4 ${w * 0.55},${h - 4} ${w - 10},${h / 2}`;
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" />
+          <polygon points={`${w - 10},${h / 2 - 5} ${w - 2},${h / 2} ${w - 10},${h / 2 + 5}`} fill={color} />
+        </svg>
+      );
+    }
     case "circle":
       return (
         <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
@@ -396,10 +396,19 @@ export function createArchetypeShape(
 ) {
   const tlId = createShapeId();
 
-  if (archetype.iconShape === "arrow" || archetype.iconShape === "line") {
-    // Both Arrow and Line use the DirectoorArrow shape — Line just sets
-    // both arrowheads to "none" so it's a plain connector.
+  if (
+    archetype.iconShape === "arrow" ||
+    archetype.iconShape === "line" ||
+    archetype.iconShape === "squiggle"
+  ) {
+    // Arrow / Line / Squiggle all use DirectoorArrow — they differ only in
+    // path kind and head configuration.
+    //   arrow    → straight + head at end
+    //   line     → straight + no heads
+    //   squiggle → squiggle path + head at end (user-editable via the
+    //              midpoint handle — drags update props.squiggleOffset)
     const isLine = archetype.iconShape === "line";
+    const isSquiggle = archetype.iconShape === "squiggle";
     editor.createShape({
       id: tlId,
       type: "directoor-arrow",
@@ -419,12 +428,13 @@ export function createArchetypeShape(
         dash: "solid",
         startHead: "none",
         endHead: isLine ? "none" : "arrow",
-        path: "straight",
+        path: isSquiggle ? "squiggle" : "straight",
+        squiggleOffset: isSquiggle ? 36 : 0,
         label: "",
         labelPosition: 0.5,
       },
     });
-    // Arrows/lines don't get auto-edit (empty label by default)
+    // Arrows/lines/squiggles don't get auto-edit (empty label by default)
     setTimeout(() => editor.select(tlId), 50);
     return tlId;
   }

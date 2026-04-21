@@ -48,6 +48,7 @@ import {
   type TLDefaultSizeStyle,
   type TLDefaultHorizontalAlignStyle,
   type TLDefaultVerticalAlignStyle,
+  type TLHandle,
   type TLRichText,
 } from "tldraw";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -263,6 +264,7 @@ const DIRECTOOR_STYLED_TYPES = new Set([
   "directoor-cloud",
   "directoor-document",
   "directoor-stack",
+  "directoor-queue",
   "directoor-arrow",
 ]);
 
@@ -313,7 +315,20 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
   // migration only applies to shapes that declare richText in their
   // new sharedProps.
   const isArrow = shape.type === "directoor-arrow";
-  if (!isArrow) {
+  if (isArrow) {
+    // Migrate arrow records that predate the squiggle variant — they're
+    // missing `squiggleOffset`, which the validator now requires. Also
+    // map any unknown `path` value to "straight" so validation passes.
+    if (typeof props.squiggleOffset !== "number") {
+      next.squiggleOffset = 0;
+      changed = true;
+    }
+    const validPaths = new Set(["straight", "elbow", "squiggle"]);
+    if (typeof props.path !== "string" || !validPaths.has(props.path)) {
+      next.path = "straight";
+      changed = true;
+    }
+  } else {
     if (typeof props.label === "string" && (!props.richText || !(props.richText as { type?: string })?.type)) {
       next.richText = toRichText(props.label);
       delete next.label;
@@ -1013,6 +1028,85 @@ export class DirectoorLayerShapeUtil extends BaseBoxShapeUtil<DirectoorLayerShap
   }
 
   override indicator(shape: DirectoorLayerShape) {
+    return <rect width={shape.props.w} height={shape.props.h} rx={6} />;
+  }
+}
+
+// ─── Queue Shape (FIFO / message queues / task queues) ──────────────
+// Visual: a rounded container holding N vertical divider lines (like
+// cells in a queue) with a small arrow nub on the right edge hinting
+// at the direction of consumption. Sized horizontally by default.
+
+export type DirectoorQueueShape = TLBaseShape<"directoor-queue", DirectoorShapeProps>;
+
+export class DirectoorQueueShapeUtil extends BaseBoxShapeUtil<DirectoorQueueShape> {
+  static override type = "directoor-queue" as const;
+  static override props = sharedProps as RecordProps<DirectoorQueueShape>;
+
+  override canEdit(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorShapeProps {
+    return { ...defaultProps, w: 170, h: 60 };
+  }
+
+  override getGeometry(shape: DirectoorQueueShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorQueueShape) {
+    const { w, h, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
+    const dashArray = strokeDashArray(dash);
+    const arrowW = Math.min(12, h * 0.4);
+    const bodyW = w - arrowW - 2;
+    // Number of internal cells proportional to width — 3 cells at
+    // 170px default, more when the user widens the shape.
+    const cellCount = Math.max(2, Math.round(bodyW / 50));
+
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
+          {/* Container */}
+          <rect
+            x={1}
+            y={1}
+            width={bodyW - 1}
+            height={h - 2}
+            rx={6}
+            fill={fill}
+            stroke={color}
+            strokeWidth={2}
+            strokeDasharray={dashArray}
+          />
+          {/* Internal dividers */}
+          {Array.from({ length: cellCount - 1 }).map((_, i) => {
+            const x = (bodyW / cellCount) * (i + 1);
+            return (
+              <line
+                key={i}
+                x1={x}
+                x2={x}
+                y1={6}
+                y2={h - 6}
+                stroke={color}
+                strokeOpacity={0.4}
+                strokeWidth={1.2}
+              />
+            );
+          })}
+          {/* Exit arrow on the right — denotes FIFO consumption */}
+          <line x1={bodyW} y1={h / 2} x2={w - arrowW} y2={h / 2} stroke={color} strokeWidth={2} />
+          <polygon
+            points={`${w - arrowW},${h / 2 - arrowW / 2} ${w - 1},${h / 2} ${w - arrowW},${h / 2 + arrowW / 2}`}
+            fill={color}
+          />
+        </svg>
+        <DirectoorShapeLabel shape={shape} />
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorQueueShape) {
     return <rect width={shape.props.w} height={shape.props.h} rx={6} />;
   }
 }
@@ -1733,7 +1827,10 @@ interface DirectoorArrowProps {
   dash: TLDefaultDashStyle;
   startHead: "none" | "arrow";
   endHead: "none" | "arrow";
-  path: "straight" | "elbow";
+  path: "straight" | "elbow" | "squiggle";
+  /** Squiggle midpoint perpendicular offset (px); user-editable via the
+   *  midpoint handle when path === "squiggle". 0 for other paths. */
+  squiggleOffset: number;
   label: string;
   /** 0..1 position along the path where the label sits. 0 = start, 1 = end. */
   labelPosition: number;
@@ -1753,7 +1850,13 @@ const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps
   dash: DefaultDashStyle,
   startHead: T.literalEnum("none", "arrow"),
   endHead: T.literalEnum("none", "arrow"),
-  path: T.literalEnum("straight", "elbow"),
+  path: T.literalEnum("straight", "elbow", "squiggle"),
+  // Perpendicular offset (in px) of the squiggle's midpoint control
+  // point relative to the straight baseline between start and end.
+  // Positive = curve "above" the baseline in screen space; negative =
+  // curve the other direction. User can drag the midpoint handle to
+  // alter this live; has no visual effect for straight / elbow paths.
+  squiggleOffset: T.number,
   label: T.string,
   labelPosition: T.number,
 };
@@ -1768,6 +1871,7 @@ const arrowDefaults: DirectoorArrowProps = {
   startHead: "none",
   endHead: "arrow",
   path: "elbow",
+  squiggleOffset: 0,
   label: "",
   labelPosition: 0.5,
 };
@@ -1914,6 +2018,68 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
     return <DirectoorArrowComponent util={this} shape={shape} />;
   }
 
+  /**
+   * Only expose a handle for squiggle arrows — it lets the user drag
+   * the midpoint perpendicular to the baseline to alter the curvature
+   * (writes the new squiggleOffset on every move).
+   *
+   * Straight and elbow arrows have no user-alterable shape — their form
+   * is fully determined by the endpoints — so they return no handles.
+   */
+  override getHandles(shape: DirectoorArrowShape): TLHandle[] {
+    if (shape.props.path !== "squiggle") return [];
+    const { sx, sy, ex, ey } = this.computeEndpoints(shape);
+    const lsx = sx - shape.x;
+    const lsy = sy - shape.y;
+    const lex = ex - shape.x;
+    const ley = ey - shape.y;
+    const midX = (lsx + lex) / 2;
+    const midY = (lsy + ley) / 2;
+    const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
+    const perpX = -(ley - lsy) / baselineLen;
+    const perpY = (lex - lsx) / baselineLen;
+    const offset = shape.props.squiggleOffset ?? 0;
+    return [
+      {
+        id: "squiggle-mid",
+        type: "virtual",
+        index: "a1" as never,
+        x: midX + perpX * offset,
+        y: midY + perpY * offset,
+      },
+    ];
+  }
+
+  override onHandleDrag(
+    shape: DirectoorArrowShape,
+    { handle }: { handle: { id: string; x: number; y: number } },
+  ): DirectoorArrowShape | void {
+    if (handle.id !== "squiggle-mid") return;
+    const { sx, sy, ex, ey } = this.computeEndpoints(shape);
+    const lsx = sx - shape.x;
+    const lsy = sy - shape.y;
+    const lex = ex - shape.x;
+    const ley = ey - shape.y;
+    const midX = (lsx + lex) / 2;
+    const midY = (lsy + ley) / 2;
+    const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
+    const perpX = -(ley - lsy) / baselineLen;
+    const perpY = (lex - lsx) / baselineLen;
+    // Project the handle's position onto the perpendicular axis at the
+    // midpoint — that projection IS the new squiggleOffset. Clamp to a
+    // reasonable range so users can't spiral the shape infinitely.
+    const dx = handle.x - midX;
+    const dy = handle.y - midY;
+    const rawOffset = dx * perpX + dy * perpY;
+    const MAX = 400;
+    const nextOffset = Math.max(-MAX, Math.min(MAX, rawOffset));
+    if (nextOffset === shape.props.squiggleOffset) return;
+    return {
+      ...shape,
+      props: { ...shape.props, squiggleOffset: nextOffset },
+    };
+  }
+
   override indicator(shape: DirectoorArrowShape) {
     const { sx, sy, ex, ey } = this.computeEndpoints(shape);
     const lsx = sx - shape.x;
@@ -1964,22 +2130,43 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
   const lex = ex - minX;
   const ley = ey - minY;
 
+  // ─── Squiggle midpoint + control points ────────────────────────
+  // The squiggle is a cubic bezier from start to end, with two control
+  // points placed 1/3 and 2/3 along the baseline, offset on OPPOSITE
+  // perpendicular sides by `squiggleOffset`. This creates a natural
+  // S-curve. The user drags the midpoint handle (see getHandles on the
+  // shape util) to alter squiggleOffset in real time.
+  const midX = (lsx + lex) / 2;
+  const midY = (lsy + ley) / 2;
+  const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
+  // Perpendicular unit vector (rotate baseline 90° CCW)
+  const perpX = -(ley - lsy) / baselineLen;
+  const perpY = (lex - lsx) / baselineLen;
+  const squiggleOffset = shape.props.squiggleOffset ?? 0;
+  const c1X = lsx + (lex - lsx) * (1 / 3) + perpX * squiggleOffset;
+  const c1Y = lsy + (ley - lsy) * (1 / 3) + perpY * squiggleOffset;
+  const c2X = lsx + (lex - lsx) * (2 / 3) - perpX * squiggleOffset;
+  const c2Y = lsy + (ley - lsy) * (2 / 3) - perpY * squiggleOffset;
+
   // Build path
   let pathD: string;
   if (path === "elbow") {
-    const midX = (lsx + lex) / 2;
     pathD = `M ${lsx} ${lsy} L ${midX} ${lsy} L ${midX} ${ley} L ${lex} ${ley}`;
+  } else if (path === "squiggle") {
+    pathD = `M ${lsx} ${lsy} C ${c1X} ${c1Y} ${c2X} ${c2Y} ${lex} ${ley}`;
   } else {
     pathD = `M ${lsx} ${lsy} L ${lex} ${ley}`;
   }
 
-  // Arrowhead angles
+  // Arrowhead angles — for squiggle, use the tangent of the curve at
+  // its endpoints, which is the direction from the adjacent control
+  // point toward the endpoint.
   const headSize = 11;
-  const lastFromX = path === "elbow" ? (lsx + lex) / 2 : lsx;
-  const lastFromY = path === "elbow" ? ley : lsy;
+  const lastFromX = path === "elbow" ? midX : path === "squiggle" ? c2X : lsx;
+  const lastFromY = path === "elbow" ? ley : path === "squiggle" ? c2Y : lsy;
   const angleEnd = Math.atan2(ley - lastFromY, lex - lastFromX);
-  const firstToX = path === "elbow" ? (lsx + lex) / 2 : lex;
-  const firstToY = path === "elbow" ? lsy : ley;
+  const firstToX = path === "elbow" ? midX : path === "squiggle" ? c1X : lex;
+  const firstToY = path === "elbow" ? lsy : path === "squiggle" ? c1Y : ley;
   const angleStart = Math.atan2(lsy - firstToY, lsx - firstToX);
 
   const headPath = (x: number, y: number, angle: number) => {
@@ -2051,6 +2238,7 @@ export const DIRECTOOR_SHAPE_UTILS = [
   DirectoorDiamondShapeUtil,
   DirectoorPillShapeUtil,
   DirectoorLayerShapeUtil,
+  DirectoorQueueShapeUtil,
   DirectoorTextShapeUtil,
   DirectoorImageShapeUtil,
   DirectoorArrowShapeUtil,
@@ -2072,8 +2260,10 @@ export function iconShapeToTldrawType(iconShape: string): string {
     case "diamond":  return "directoor-diamond";
     case "pill":     return "directoor-pill";
     case "layer":    return "directoor-layer";
+    case "queue":    return "directoor-queue";
     case "arrow":    return "directoor-arrow";
     case "line":     return "directoor-arrow"; // line = arrow with no heads
+    case "squiggle": return "directoor-arrow"; // squiggle = arrow with path="squiggle"
     case "text":     return "directoor-text";
     case "image":    return "directoor-image";
     case "rectangle":

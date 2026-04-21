@@ -46,16 +46,27 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
   // ─── Position against tldraw's bottom toolbar ───────────────────────
   // The toolbar pill sits at the bottom-center of the tl-container. We
   // anchor our button to its RIGHT EDGE so it reads as "one extra slot"
-  // on the same strip. Re-measured on resize / scroll so it follows.
-  const [pos, setPos] = useState<{ left: number; bottom: number } | null>(null);
+  // on the same strip. We also read the TOOLBAR BUTTON's own height
+  // (rather than the outer wrapper's) so our pill sits exactly on the
+  // same baseline as rectangle / arrow / text — no more vertical jitter.
+  const [pos, setPos] = useState<{ left: number; top: number; size: number } | null>(null);
   useEffect(() => {
     const update = () => {
       const toolbar = document.querySelector(".tlui-toolbar__inner");
       if (!toolbar) return;
-      const rect = toolbar.getBoundingClientRect();
+      // Use an actual toolbar BUTTON as the reference — tldraw's
+      // .tlui-button.tlui-button__tool — that way we inherit its height
+      // exactly regardless of tldraw version / theme. Fallback to the
+      // toolbar container if no buttons are found yet (first paint).
+      const sampleBtn = toolbar.querySelector<HTMLElement>(".tlui-button__tool, .tlui-button");
+      const btnRect = sampleBtn?.getBoundingClientRect();
+      const barRect = toolbar.getBoundingClientRect();
+      const size = btnRect?.height ?? 40;
+      const top = btnRect ? btnRect.top : barRect.top + (barRect.height - size) / 2;
       setPos({
-        left: rect.right + 8,
-        bottom: window.innerHeight - rect.bottom,
+        left: barRect.right + 6,
+        top,
+        size,
       });
     };
     update();
@@ -148,7 +159,8 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
 
   return (
     <>
-      {/* Floating trigger button */}
+      {/* Floating trigger button — dimensions mirror tldraw toolbar
+         buttons so the pill reads as one continuous strip. */}
       <button
         ref={anchorRef}
         onClick={() => setOpen((v) => !v)}
@@ -157,11 +169,11 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
         style={{
           position: "fixed",
           left: pos.left,
-          bottom: pos.bottom,
+          top: pos.top,
           zIndex: 9994,
-          width: 40,
-          height: 40,
-          borderRadius: 10,
+          width: pos.size,
+          height: pos.size,
+          borderRadius: 8,
           background: open ? "#3B82F6" : "white",
           color: open ? "white" : "#334155",
           border: "1px solid #E2E8F0",
@@ -171,12 +183,14 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
           justifyContent: "center",
           cursor: "pointer",
           transition: "background 120ms, color 120ms",
+          padding: 0,
         }}
       >
-        <Shapes size={18} />
+        <Shapes size={Math.round(pos.size * 0.45)} />
       </button>
 
-      {/* Popup (portal so it can layer above tldraw chrome) */}
+      {/* Popup (portal so it can layer above tldraw chrome) — anchored
+         to the top of the trigger button so it grows upward. */}
       {open &&
         createPortal(
           <div
@@ -184,7 +198,7 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
             style={{
               position: "fixed",
               left: pos.left,
-              bottom: pos.bottom + 50,
+              bottom: window.innerHeight - pos.top + 8,
               zIndex: 9995,
               background: "white",
               borderRadius: 12,

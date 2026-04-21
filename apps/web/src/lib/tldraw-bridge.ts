@@ -144,40 +144,85 @@ function executeAction(
           },
         });
       } else {
-        // Every semantic type routes through a Directoor custom shape.
-        // resolveIconShape handles novel types via heuristic, never falls back to tldraw geo.
+        // Resolve an iconShape from the semantic type. If tldraw's native
+        // geo shape can render it (rectangle/ellipse/diamond/hexagon/
+        // cloud), create a `geo` shape — this keeps the diagram using
+        // familiar native shapes that the style panel + PPTX export +
+        // geo tool all understand natively. Otherwise fall back to the
+        // Directoor custom shape type for cases that tldraw doesn't
+        // have (cylinder / actor / document / stack / pill / layer /
+        // queue).
         const iconShape = resolveIconShape(obj.semanticType);
-        const customType = iconShapeToTldrawType(iconShape);
         const defaults = defaultStyleForSemanticType(obj.semanticType);
-
-        // If the LLM gave us a custom color use it, else use our palette default
         const stroke = obj.style.stroke && obj.style.stroke !== "#334155"
           ? obj.style.stroke
           : defaults.stroke;
         const fill = obj.style.fill && obj.style.fill !== "transparent" && obj.style.fill !== "#FFFFFF"
           ? obj.style.fill
           : defaults.fill;
+        const dash: "solid" | "dashed" | "dotted" =
+          obj.style.strokeStyle === "dashed" || obj.style.strokeStyle === "dotted"
+            ? obj.style.strokeStyle
+            : "solid";
 
-        editor.createShape({
-          id: tlId,
-          type: customType,
-          x: obj.position.x,
-          y: obj.position.y,
-          props: {
-            w: obj.size.width,
-            h: obj.size.height,
-            richText: toRichText(obj.label ?? ""),
-            color: hexToTldrawColor(stroke),
-            fill: fillFromLegacy(fill),
-            dash: obj.style.strokeStyle === "dashed" || obj.style.strokeStyle === "dotted"
-              ? obj.style.strokeStyle
-              : "solid",
-            font: "draw",
-            size: "m",
-            align: "middle",
-            verticalAlign: "middle",
-          },
-        });
+        // iconShape → tldraw native geo variant (if applicable)
+        const NATIVE_GEO: Record<string, string | undefined> = {
+          rectangle: "rectangle",
+          circle: "ellipse",
+          diamond: "diamond",
+          hexagon: "hexagon",
+          cloud: "cloud",
+        };
+        const nativeVariant = NATIVE_GEO[iconShape];
+
+        if (nativeVariant) {
+          // Native tldraw geo shape — uses the same style registry as
+          // the DefaultStylePanel, and exports cleanly to PNG/SVG/PPTX.
+          // Defaults: dash=solid, size=s, font=sans (per house style).
+          editor.createShape({
+            id: tlId,
+            type: "geo",
+            x: obj.position.x,
+            y: obj.position.y,
+            props: {
+              w: obj.size.width,
+              h: obj.size.height,
+              geo: nativeVariant,
+              color: hexToTldrawColor(stroke),
+              fill: fillFromLegacy(fill),
+              dash,
+              size: "s",
+              font: "sans",
+              align: "middle",
+              verticalAlign: "middle",
+              richText: toRichText(obj.label ?? ""),
+            },
+          });
+        } else {
+          // Directoor-unique shape (cylinder, actor, document, stack,
+          // pill, layer, queue). Same style enums as above so the
+          // style panel and exports behave consistently.
+          const customType = iconShapeToTldrawType(iconShape);
+          editor.createShape({
+            id: tlId,
+            type: customType,
+            x: obj.position.x,
+            y: obj.position.y,
+            props: {
+              w: obj.size.width,
+              h: obj.size.height,
+              richText: toRichText(obj.label ?? ""),
+              color: hexToTldrawColor(stroke),
+              fill: fillFromLegacy(fill),
+              dash,
+              font: "sans",
+              size: "s",
+              align: "middle",
+              verticalAlign: "middle",
+              labelColor: "black",
+            },
+          });
+        }
       }
       break;
     }

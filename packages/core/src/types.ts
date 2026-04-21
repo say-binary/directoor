@@ -125,16 +125,18 @@ export type IconShape =
   | 'rectangle'   // Default — clean rectangle (our own, not tldraw geo)
   | 'cylinder'    // Databases, topics, storage
   | 'hexagon'     // Microservices, service mesh
-  | 'actor'       // People, users, producers, consumers
+  | 'actor'       // People / users / producers / consumers  (displayed as "Human")
   | 'cloud'       // Managed/external cloud services
-  | 'document'    // Logs, files, reports
+  | 'document'    // Logs / files / reports / policies  (displayed as "File")
   | 'stack'       // Brokers, clusters, replicated compute
+  | 'queue'       // FIFO buffer / message queue / task queue
   | 'circle'      // Neural nodes, state machines, events
   | 'diamond'     // Decisions, conditions, branches
   | 'pill'        // Endpoints, ports, API routes, tags
   | 'layer'       // ML model layers, stack layers with stripes
   | 'arrow'       // Connection/edge with arrowhead(s)
   | 'line'        // Plain connection/edge (no arrowheads)
+  | 'squiggle'    // Curvy arrow; user can drag the midpoint handle to alter curvature
   | 'text'        // Standalone text — movable, rotatable, editable
   | 'image';      // Web image — resizable, movable, rotatable
 
