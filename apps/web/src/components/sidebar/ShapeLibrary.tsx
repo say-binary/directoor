@@ -567,10 +567,12 @@ export function createArchetypeShape(
       color: hexToTldrawColor(archetype.defaultStroke),
       fill: fillFromLegacy(archetype.defaultFill),
       dash: "solid",
-      font: "draw",
-      size: "m",
+      font: "sans",
+      size: "s",
       align: "middle",
       verticalAlign: "middle",
+      labelColor: "black",
+      animated: false,
     },
   });
 

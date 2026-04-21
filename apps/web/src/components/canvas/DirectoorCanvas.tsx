@@ -5,14 +5,15 @@ import {
   Tldraw, Editor, TLShapeId, TLComponents, TLCameraOptions, TLShape,
   atom, useValue, useEditor, DefaultStylePanel,
 } from "tldraw";
-import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles, TL_COLOR_HEX } from "./shapes/DirectoorShapes";
+import { DIRECTOOR_SHAPE_UTILS, normalizeDirectoorShapeStyles, TL_COLOR_HEX, hexToTldrawColor } from "./shapes/DirectoorShapes";
 import type { TLDefaultColorStyle } from "tldraw";
 import {
   DefaultDashStyle,
   DefaultSizeStyle,
   DefaultFontStyle,
+  createShapeId,
 } from "tldraw";
-import { X as CloseIcon, Sliders } from "lucide-react";
+import { X as CloseIcon, Sliders, Play as PlayIcon } from "lucide-react";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -339,6 +340,143 @@ const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
   "white",
 ];
 
+/**
+ * AnimateToggle — small pill that toggles `animated: boolean` on the
+ * currently selected shape(s). Only renders when the selected shape
+ * supports the animation prop (i.e. has it in its props) — currently
+ * directoor-arrow (flowing dashes) and directoor-gear (rotation) are
+ * the two visually animated types, but any Directoor styled shape
+ * carries the prop for future use. Not shown for native tldraw shapes.
+ */
+function AnimateToggle() {
+  const editor = useEditor();
+
+  const state = useValue<{ on: boolean; mixed: boolean } | null>(
+    "animatedState",
+    () => {
+      const ids = editor.getSelectedShapeIds();
+      let some: boolean | null = null;
+      let mixed = false;
+      let any = false;
+      for (const id of ids) {
+        const shape = editor.getShape(id);
+        const props = shape?.props as { animated?: boolean } | undefined;
+        if (!props || typeof props.animated !== "boolean") continue;
+        any = true;
+        if (some === null) some = props.animated;
+        else if (some !== props.animated) mixed = true;
+      }
+      if (!any) return null;
+      return { on: some ?? false, mixed };
+    },
+    [editor],
+  );
+
+  // Anchor position — same column as the tldraw style panel, just
+  // below the text-color picker when it's visible, otherwise below
+  // the style panel itself.
+  const [top, setTop] = useState(360);
+  useEffect(() => {
+    const update = () => {
+      const labelPanel = document.querySelector(".directoor-label-color-panel") as HTMLElement | null;
+      const stylePanel = document.querySelector(".tlui-style-panel") as HTMLElement | null;
+      const ref = labelPanel ?? stylePanel;
+      if (ref) setTop(ref.getBoundingClientRect().bottom + 6);
+    };
+    update();
+    const id = setInterval(update, 300);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!state) return null;
+
+  const toggle = () => {
+    const next = state.mixed ? true : !state.on;
+    const ids = editor.getSelectedShapeIds();
+    editor.run(() => {
+      for (const id of ids) {
+        const shape = editor.getShape(id);
+        const props = shape?.props as { animated?: boolean } | undefined;
+        if (!props || typeof props.animated !== "boolean") continue;
+        editor.updateShape({ id, type: shape!.type, props: { ...props, animated: next } });
+      }
+    });
+  };
+
+  return (
+    <div
+      className="directoor-animate-toggle"
+      style={{
+        position: "fixed",
+        top,
+        right: "calc(100vw - var(--ds-page-right-x, 100vw) + 16px)",
+        zIndex: 9993,
+        background: "white",
+        borderRadius: 8,
+        boxShadow: "0 2px 12px rgba(15,23,42,0.12)",
+        padding: "8px 10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        width: 156,
+        pointerEvents: "all",
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 600, color: "#64748B", letterSpacing: "0.05em", textTransform: "uppercase" }}>
+        Animate
+      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        title="Toggle animation (flowing arrows / spinning gears)"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 6,
+          padding: "5px 8px",
+          borderRadius: 6,
+          border: "1px solid #E2E8F0",
+          background: state.on ? "#EFF6FF" : "white",
+          color: state.on ? "#1D4ED8" : "#475569",
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: "pointer",
+        }}
+      >
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <PlayIcon size={11} />
+          {state.mixed ? "Mixed" : state.on ? "On" : "Off"}
+        </span>
+        <span
+          aria-hidden
+          style={{
+            width: 22,
+            height: 12,
+            borderRadius: 999,
+            background: state.on ? "#3B82F6" : "#CBD5E1",
+            position: "relative",
+            transition: "background 120ms",
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: 1,
+              left: state.on ? 11 : 1,
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              background: "white",
+              transition: "left 120ms",
+            }}
+          />
+        </span>
+      </button>
+    </div>
+  );
+}
+
 function LabelColorPicker() {
   const editor = useEditor();
 
@@ -554,6 +692,7 @@ function ConditionalStylePanel() {
         </button>
       )}
       <LabelColorPicker />
+      <AnimateToggle />
     </>
   );
 }
@@ -793,6 +932,26 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         : { ...s, x, y };
     };
 
+    // Native tldraw shape types whose style props we want to steer to
+    // our house defaults (solid / s / sans) on first creation — but
+    // ONLY if the user hasn't overridden tldraw's pristine defaults
+    // (draw / m / draw). This way, user-picked style values are
+    // respected; only untouched defaults get rewritten.
+    const NATIVE_STYLED_TYPES = new Set(["geo", "text", "note", "highlight", "arrow", "line"]);
+    const injectHouseDefaults = (s: TLShape): TLShape => {
+      if (!NATIVE_STYLED_TYPES.has(s.type)) return s;
+      const props = s.props as { dash?: string; size?: string; font?: string };
+      const patch: Record<string, string> = {};
+      // Only override values that are STILL at tldraw's pristine defaults.
+      if (props.dash === "draw") patch.dash = "solid";
+      if (props.size === "m") patch.size = "s";
+      // `text` shapes use their own size enum and don't have a "font"
+      // equivalent to the "draw" sketchy option; still fine to switch.
+      if (props.font === "draw") patch.font = "sans";
+      if (Object.keys(patch).length === 0) return s;
+      return { ...s, props: { ...props, ...patch } };
+    };
+
     // Normalize legacy-hex color/fill/dash into tldraw's enum always
     // (safe during load — it only touches props, not x/y). Position
     // clamping is skipped during snapshot load so saved shape positions
@@ -804,7 +963,15 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       return clampShape(normalized);
     };
 
-    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => normalizeAndMaybeClamp(s));
+    // beforeCreate — normalize + clamp + inject house defaults.
+    // Default injection ONLY happens here (on first creation), never
+    // on subsequent changes, so user-picked style values stay sticky.
+    const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => {
+      const base = normalizeAndMaybeClamp(s);
+      if (isLoadingSnapshotRef.current) return base;
+      return injectHouseDefaults(base);
+    });
+    // beforeChange — only normalize + clamp. Respects user style edits.
     const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndMaybeClamp(next));
     // After-change backstop. If somehow a shape landed off-page despite
     // the before-handlers, force-correct it. Skip during snapshot load
@@ -823,7 +990,93 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         });
       }
     });
-    return () => { u1(); u2(); u3(); };
+
+    // ─── Arrow conversion ─────────────────────────────────────────
+    // Convert every tldraw NATIVE arrow created by the user via the
+    // arrow tool into our directoor-arrow with path="straight". This
+    // gives users the three draggable bend handles (bend1/bend2/bend3)
+    // as soon as they draw an arrow — matching the #2b feature
+    // request. We intentionally DO NOT convert arrows loaded from
+    // saved snapshots (isLoadingSnapshotRef guard); existing native
+    // arrows continue to render as they were saved.
+    //
+    // We convert in the afterCreate phase, inside a microtask, because
+    // (a) the native arrow's terminal props are only finalised after
+    // the drag completes, and (b) reading + deleting + recreating
+    // inside the synchronous handler would confuse tldraw's history.
+    const u4 = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
+      if (isLoadingSnapshotRef.current) return;
+      if (shape.type !== "arrow") return;
+
+      queueMicrotask(() => {
+        const native = editor.getShape(shape.id);
+        if (!native || native.type !== "arrow") return;
+        const nativeProps = native.props as {
+          start: { x?: number; y?: number };
+          end: { x?: number; y?: number };
+          color?: string;
+          size?: string;
+          dash?: string;
+          text?: string;
+        };
+        // tldraw v3 stores start/end as plain points in shape-local
+        // coords; bound arrows get their binding via the separate
+        // bindings store (readable via editor.getBindingsFromShape).
+        const startX = native.x + (nativeProps.start?.x ?? 0);
+        const startY = native.y + (nativeProps.start?.y ?? 0);
+        const endX = native.x + (nativeProps.end?.x ?? 0);
+        const endY = native.y + (nativeProps.end?.y ?? 0);
+
+        // Preserve binding targets if the user snapped the arrow ends
+        // onto existing shapes. getBindingsFromShape returns the
+        // arrow's "arrow" bindings (start/end terminals).
+        let fromShapeId = "";
+        let toShapeId = "";
+        try {
+          const bindings = editor.getBindingsFromShape(native.id, "arrow");
+          for (const b of bindings) {
+            const bprops = b.props as { terminal?: "start" | "end" };
+            if (bprops.terminal === "start") fromShapeId = b.toId as unknown as string;
+            else if (bprops.terminal === "end") toShapeId = b.toId as unknown as string;
+          }
+        } catch { /* binding lookup can throw for unbound arrows */ }
+
+        const newId = createShapeId();
+        editor.run(() => {
+          editor.createShape({
+            id: newId,
+            type: "directoor-arrow",
+            x: 0,
+            y: 0,
+            props: {
+              startX, startY, endX, endY,
+              fromShapeId, toShapeId,
+              fromAnchor: "auto",
+              toAnchor: "auto",
+              color: hexToTldrawColor(nativeProps.color ?? "grey"),
+              strokeWidth: 2,
+              dash: nativeProps.dash === "dashed" || nativeProps.dash === "dotted"
+                ? nativeProps.dash
+                : "solid",
+              startHead: "none",
+              endHead: "arrow",
+              path: "straight",
+              squiggleOffset: 0,
+              bend1Offset: 0,
+              bend2Offset: 0,
+              bend3Offset: 0,
+              animated: false,
+              label: nativeProps.text ?? "",
+              labelPosition: 0.5,
+            },
+          });
+          editor.deleteShape(native.id);
+          editor.select(newId);
+        });
+      });
+    });
+
+    return () => { u1(); u2(); u3(); u4(); };
   }, [editor]);
 
   // ─── React to page-width changes (from drag handle or load) ─────────

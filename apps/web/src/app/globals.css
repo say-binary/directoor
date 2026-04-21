@@ -72,3 +72,35 @@ body,
 .tl-background__wrapper {
   pointer-events: none !important;
 }
+
+/* ─── Animated shapes (Option A — CSS animation only) ──────────────────
+ * Shapes that opt-in via `animated: true` render with one of these
+ * classes on their inner SVG element. GPU-accelerated CSS, no React
+ * re-renders per frame. Respects prefers-reduced-motion so users who've
+ * asked the OS to reduce motion get still shapes.
+ */
+@keyframes directoor-flow {
+  from { stroke-dashoffset: 0; }
+  to   { stroke-dashoffset: -24; }
+}
+@keyframes directoor-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.directoor-animate-flow {
+  /* Force a visible dash pattern even when dash === "solid" so the
+     flowing effect is noticeable on any arrow. */
+  stroke-dasharray: 8 4;
+  animation: directoor-flow 0.9s linear infinite;
+}
+.directoor-animate-spin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: directoor-spin 6s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .directoor-animate-flow,
+  .directoor-animate-spin {
+    animation: none !important;
+  }
+}

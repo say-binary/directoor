@@ -220,6 +220,7 @@ function executeAction(
               align: "middle",
               verticalAlign: "middle",
               labelColor: "black",
+              animated: false,
             },
           });
         }

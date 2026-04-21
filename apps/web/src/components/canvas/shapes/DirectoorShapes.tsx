@@ -85,6 +85,13 @@ interface DirectoorShapeProps {
    *  Defaults to "black" so text is always readable regardless of fill.
    *  Controlled separately from `color` (which drives stroke + fill tint). */
   labelColor: TLDefaultColorStyle;
+  /** When true, the shape renders with a CSS-driven looping animation.
+   *  Behaviour depends on the shape type:
+   *    • directoor-gear       → rotates around its centre
+   *    • (future shapes)      → their own motion
+   *  For non-animated shape types this prop has no visual effect but
+   *  is still stored so the toggle survives round-tripping. */
+  animated: boolean;
 }
 
 // All valid tldraw color enum values — used for the labelColor validator.
@@ -105,6 +112,7 @@ const sharedProps: RecordProps<TLBaseShape<string, DirectoorShapeProps>> = {
   align: DefaultHorizontalAlignStyle,
   verticalAlign: DefaultVerticalAlignStyle,
   labelColor: T.literalEnum(...TL_COLOR_VALUES),
+  animated: T.boolean,
 };
 
 const defaultProps: DirectoorShapeProps = {
@@ -119,6 +127,7 @@ const defaultProps: DirectoorShapeProps = {
   align: "middle",
   verticalAlign: "middle",
   labelColor: "black",
+  animated: false,
 };
 
 // Label font sizes in px per tldraw size enum — matches native geo shape.
@@ -338,6 +347,10 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
       next.bend3Offset = 0;
       changed = true;
     }
+    if (typeof props.animated !== "boolean") {
+      next.animated = false;
+      changed = true;
+    }
     const validPaths = new Set(["straight", "elbow", "squiggle"]);
     if (typeof props.path !== "string" || !validPaths.has(props.path)) {
       next.path = "straight";
@@ -376,6 +389,11 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
     // have it, so default to "black" (readable on any background).
     if (typeof props.labelColor !== "string" || !VALID_TL_COLORS.has(props.labelColor as TLDefaultColorStyle)) {
       next.labelColor = "black";
+      changed = true;
+    }
+    // animated: new animation toggle, off by default for old shapes.
+    if (typeof props.animated !== "boolean") {
+      next.animated = false;
       changed = true;
     }
   }
@@ -1168,7 +1186,7 @@ export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape>
   }
 
   override component(shape: DirectoorGearShape) {
-    const { w, h, dash } = shape.props;
+    const { w, h, dash, animated } = shape.props;
     const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
     const dashArray = strokeDashArray(dash);
     const size = Math.min(w, h);
@@ -1180,11 +1198,23 @@ export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape>
     const rHole = rOuter * 0.22;
     const d = gearPath(cx, cy, rInner, toothDepth, 8);
 
+    // When animated, wrap the gear's geometry in a <g> that spins via
+    // CSS. transform-origin is set on the class (fill-box + center).
+    const gearBody = (
+      <>
+        <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
+        <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
+      </>
+    );
+
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
         <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
-          <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
-          <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
+          {animated ? (
+            <g className="directoor-animate-spin">{gearBody}</g>
+          ) : (
+            gearBody
+          )}
         </svg>
         <DirectoorShapeLabel shape={shape} bottomAnchored />
       </HTMLContainer>
@@ -2038,6 +2068,11 @@ interface DirectoorArrowProps {
   bend1Offset: number;
   bend2Offset: number;
   bend3Offset: number;
+  /** When true, the arrow's stroke animates with a flowing dash effect
+   *  (CSS stroke-dashoffset keyframe). User toggleable via the style
+   *  panel. Has no effect for arrows without dashes; for solid
+   *  strokes we force a "8 4" pattern while animated. */
+  animated: boolean;
   label: string;
   /** 0..1 position along the path where the label sits. 0 = start, 1 = end. */
   labelPosition: number;
@@ -2067,6 +2102,7 @@ const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps
   bend1Offset: T.number,
   bend2Offset: T.number,
   bend3Offset: T.number,
+  animated: T.boolean,
   label: T.string,
   labelPosition: T.number,
 };
@@ -2085,6 +2121,7 @@ const arrowDefaults: DirectoorArrowProps = {
   bend1Offset: 0,
   bend2Offset: 0,
   bend3Offset: 0,
+  animated: false,
   label: "",
   labelPosition: 0.5,
 };
@@ -2512,9 +2549,10 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
           fill="none"
           stroke={color}
           strokeWidth={strokeWidth}
-          strokeDasharray={dashArray}
+          strokeDasharray={shape.props.animated ? undefined : dashArray}
           strokeLinecap="round"
           strokeLinejoin="round"
+          className={shape.props.animated ? "directoor-animate-flow" : undefined}
           style={{ pointerEvents: "stroke" }}
         />
         {endHead === "arrow" && (
