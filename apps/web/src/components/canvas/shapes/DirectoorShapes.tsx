@@ -1199,7 +1199,13 @@ export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape>
     const d = gearPath(cx, cy, rInner, toothDepth, 8);
 
     // When animated, wrap the gear's geometry in a <g> that spins via
-    // CSS. transform-origin is set on the class (fill-box + center).
+    // inline CSS animation. We set transform-origin in PIXELS on the
+    // <g>'s inline style — this sidesteps the `transform-box: fill-box`
+    // quirks (Firefox/Safari have historically miscomputed fill-box on
+    // <g> elements, so the gear ends up rotating around (0,0) of the SVG
+    // rather than the gear center). Pixel transform-origin on an SVG
+    // <g> resolves against the SVG viewport, which is exactly what we
+    // want: (cx, cy) is the gear center.
     const gearBody = (
       <>
         <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
@@ -1209,9 +1215,16 @@ export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape>
 
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
-        <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
+        <svg width={w} height={h} style={{ position: "absolute", inset: 0, overflow: "visible" }}>
           {animated ? (
-            <g className="directoor-animate-spin">{gearBody}</g>
+            <g
+              style={{
+                transformOrigin: `${cx}px ${cy}px`,
+                animation: "directoor-spin 6s linear infinite",
+              }}
+            >
+              {gearBody}
+            </g>
           ) : (
             gearBody
           )}
@@ -2299,10 +2312,15 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
       return [
         {
           id: "squiggle-mid",
-          type: "virtual",
+          // "vertex" handles are fully interactive (draggable) — "virtual"
+          // handles are render-only hints that tldraw only promotes on
+          // polyline-style shapes. We need real drag events fed into
+          // onHandleDrag, so these MUST be vertex handles.
+          type: "vertex",
           index: "a1" as never,
           x: midX + perpX * offset,
           y: midY + perpY * offset,
+          canSnap: false,
         },
       ];
     }
@@ -2314,24 +2332,27 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
     return [
       {
         id: "bend-1",
-        type: "virtual",
+        type: "vertex",
         index: "a1" as never,
         x: lsx + (lex - lsx) * 0.25 + perpX * b1o,
         y: lsy + (ley - lsy) * 0.25 + perpY * b1o,
+        canSnap: false,
       },
       {
         id: "bend-2",
-        type: "virtual",
+        type: "vertex",
         index: "a2" as never,
         x: lsx + (lex - lsx) * 0.5 + perpX * b2o,
         y: lsy + (ley - lsy) * 0.5 + perpY * b2o,
+        canSnap: false,
       },
       {
         id: "bend-3",
-        type: "virtual",
+        type: "vertex",
         index: "a3" as never,
         x: lsx + (lex - lsx) * 0.75 + perpX * b3o,
         y: lsy + (ley - lsy) * 0.75 + perpY * b3o,
+        canSnap: false,
       },
     ];
   }
@@ -2543,17 +2564,24 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
           strokeWidth={Math.max(8, strokeWidth + 4)}
           style={{ pointerEvents: "stroke" }}
         />
-        {/* Visible path */}
+        {/* Visible path. When animated, we drive stroke-dashoffset via an
+            inline CSS animation — inline style is more reliable than a
+            class, because class-based animations can lose on CSS cascade
+            ordering issues and because tldraw's <HTMLContainer> wraps
+            shape content in several layers that can disturb specificity. */}
         <path
           d={pathD}
           fill="none"
           stroke={color}
           strokeWidth={strokeWidth}
-          strokeDasharray={shape.props.animated ? undefined : dashArray}
-          strokeLinecap="round"
+          strokeDasharray={shape.props.animated ? "8 4" : dashArray}
+          strokeLinecap={shape.props.animated ? "butt" : "round"}
           strokeLinejoin="round"
-          className={shape.props.animated ? "directoor-animate-flow" : undefined}
-          style={{ pointerEvents: "stroke" }}
+          style={
+            shape.props.animated
+              ? { pointerEvents: "stroke", animation: "directoor-flow 0.9s linear infinite" }
+              : { pointerEvents: "stroke" }
+          }
         />
         {endHead === "arrow" && (
           <path d={headPath(lex, ley, angleEnd)} fill={color} stroke={color} strokeWidth={1} strokeLinejoin="round" />

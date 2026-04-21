@@ -915,6 +915,11 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       // tldraw native arrow: leave untouched for now (legacy, rarely used
       // in Directoor canvases — we replaced it with directoor-arrow).
       if (s.type === "arrow") return s;
+      // tldraw native line: geometry lives in props.points, not shape.x/y.
+      // Our generic w-based clamp can produce nonsense for line shapes and
+      // — critically — causes the tldraw line tool to throw during its
+      // mid-drag point-add sequence. Leave line shapes untouched.
+      if (s.type === "line") return s;
       const props = s.props as { w?: number };
       const pw = pageWidthRef.current;
       const hasW = typeof props.w === "number" && props.w > 0;
@@ -937,7 +942,11 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // ONLY if the user hasn't overridden tldraw's pristine defaults
     // (draw / m / draw). This way, user-picked style values are
     // respected; only untouched defaults get rewritten.
-    const NATIVE_STYLED_TYPES = new Set(["geo", "text", "note", "highlight", "arrow", "line"]);
+    // Line shape intentionally excluded — its props are validated tightly
+    // by tldraw and our patch has caused creation-time errors for the
+    // line tool. setStyleForNextShapes already steers line's dash/size to
+    // our house defaults via tldraw's own pipeline, so no patch needed.
+    const NATIVE_STYLED_TYPES = new Set(["geo", "text", "note", "highlight", "arrow"]);
     const injectHouseDefaults = (s: TLShape): TLShape => {
       if (!NATIVE_STYLED_TYPES.has(s.type)) return s;
       const props = s.props as { dash?: string; size?: string; font?: string };
@@ -966,28 +975,52 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // beforeCreate — normalize + clamp + inject house defaults.
     // Default injection ONLY happens here (on first creation), never
     // on subsequent changes, so user-picked style values stay sticky.
+    //
+    // IMPORTANT: every side-effect handler is wrapped in try/catch. A
+    // throw inside a store side-effect kills the tool session (e.g. the
+    // line tool gets into a state where pointer events stop working).
+    // Swallow unexpected errors and fall through to the pristine shape.
     const u1 = editor.sideEffects.registerBeforeCreateHandler("shape", (s) => {
-      const base = normalizeAndMaybeClamp(s);
-      if (isLoadingSnapshotRef.current) return base;
-      return injectHouseDefaults(base);
+      try {
+        const base = normalizeAndMaybeClamp(s);
+        if (isLoadingSnapshotRef.current) return base;
+        return injectHouseDefaults(base);
+      } catch (err) {
+        console.warn("[Directoor] beforeCreate handler error — returning shape unchanged", err);
+        return s;
+      }
     });
     // beforeChange — only normalize + clamp. Respects user style edits.
-    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => normalizeAndMaybeClamp(next));
+    const u2 = editor.sideEffects.registerBeforeChangeHandler("shape", (_prev, next) => {
+      try {
+        return normalizeAndMaybeClamp(next);
+      } catch (err) {
+        console.warn("[Directoor] beforeChange handler error — returning shape unchanged", err);
+        return next;
+      }
+    });
     // After-change backstop. If somehow a shape landed off-page despite
     // the before-handlers, force-correct it. Skip during snapshot load
-    // (data is trusted), and skip arrows (their visual position is
-    // endpoint-derived, not x/y-derived).
+    // (data is trusted), skip arrows (their visual position is
+    // endpoint-derived, not x/y-derived), and skip line shapes (they
+    // store geometry in `props.points`, not shape.x/y, so clamping the
+    // anchor in mid-draw can get tldraw's line tool stuck).
     const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
-      if (isLoadingSnapshotRef.current) return;
-      if (ARROW_TYPES.has(next.type)) return;
-      const corrected = clampShape(next);
-      if (corrected !== next) {
-        // Use a microtask so we don't recurse inside the side-effect.
-        queueMicrotask(() => {
-          try {
-            editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
-          } catch { /* shape may have been deleted */ }
-        });
+      try {
+        if (isLoadingSnapshotRef.current) return;
+        if (ARROW_TYPES.has(next.type)) return;
+        if (next.type === "line") return;
+        const corrected = clampShape(next);
+        if (corrected !== next) {
+          // Use a microtask so we don't recurse inside the side-effect.
+          queueMicrotask(() => {
+            try {
+              editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
+            } catch { /* shape may have been deleted */ }
+          });
+        }
+      } catch (err) {
+        console.warn("[Directoor] afterChange handler error", err);
       }
     });
 
@@ -1000,48 +1033,63 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // saved snapshots (isLoadingSnapshotRef guard); existing native
     // arrows continue to render as they were saved.
     //
-    // We convert in the afterCreate phase, inside a microtask, because
-    // (a) the native arrow's terminal props are only finalised after
-    // the drag completes, and (b) reading + deleting + recreating
-    // inside the synchronous handler would confuse tldraw's history.
-    const u4 = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
-      if (isLoadingSnapshotRef.current) return;
-      if (shape.type !== "arrow") return;
+    // TIMING (critical — previous bug: "expected handles for arrow"
+    // crash). The arrow tool creates the shape at pointerDown and then
+    // calls updateArrowShapeEndHandle on every pointerMove until
+    // pointerUp. If we convert inside afterCreate (even via a
+    // microtask), tldraw's next pointerMove finds the native arrow
+    // missing and throws. So we DEBOUNCE the conversion: schedule it
+    // with a timer, and every time the shape changes (i.e. user is
+    // still dragging), reset the timer. When the shape has been idle
+    // for 250ms AND the arrow tool is no longer active, convert.
+    //
+    // This also means clicking the arrow tool and immediately releasing
+    // (a no-drag click) still converts after 250ms of idle, which is
+    // fine — the resulting 0-length directoor-arrow can be extended or
+    // deleted by the user.
+    const pendingArrowConversions = new Map<string, ReturnType<typeof setTimeout>>();
+    const convertArrow = (id: TLShapeId) => {
+      const native = editor.getShape(id);
+      if (!native || native.type !== "arrow") return;
+      const nativeProps = native.props as {
+        start: { x?: number; y?: number };
+        end: { x?: number; y?: number };
+        color?: string;
+        size?: string;
+        dash?: string;
+        text?: string;
+      };
+      // Skip "zero-length" arrows (pointer-down without drag). Keep the
+      // native shape so the user can still interact with it; tldraw
+      // deletes it on the next click outside anyway.
+      const sxLocal = nativeProps.start?.x ?? 0;
+      const syLocal = nativeProps.start?.y ?? 0;
+      const exLocal = nativeProps.end?.x ?? 0;
+      const eyLocal = nativeProps.end?.y ?? 0;
+      if (Math.hypot(exLocal - sxLocal, eyLocal - syLocal) < 2) return;
 
-      queueMicrotask(() => {
-        const native = editor.getShape(shape.id);
-        if (!native || native.type !== "arrow") return;
-        const nativeProps = native.props as {
-          start: { x?: number; y?: number };
-          end: { x?: number; y?: number };
-          color?: string;
-          size?: string;
-          dash?: string;
-          text?: string;
-        };
-        // tldraw v3 stores start/end as plain points in shape-local
-        // coords; bound arrows get their binding via the separate
-        // bindings store (readable via editor.getBindingsFromShape).
-        const startX = native.x + (nativeProps.start?.x ?? 0);
-        const startY = native.y + (nativeProps.start?.y ?? 0);
-        const endX = native.x + (nativeProps.end?.x ?? 0);
-        const endY = native.y + (nativeProps.end?.y ?? 0);
+      // Absolute page coordinates for our directoor-arrow.
+      const startX = native.x + sxLocal;
+      const startY = native.y + syLocal;
+      const endX = native.x + exLocal;
+      const endY = native.y + eyLocal;
 
-        // Preserve binding targets if the user snapped the arrow ends
-        // onto existing shapes. getBindingsFromShape returns the
-        // arrow's "arrow" bindings (start/end terminals).
-        let fromShapeId = "";
-        let toShapeId = "";
-        try {
-          const bindings = editor.getBindingsFromShape(native.id, "arrow");
-          for (const b of bindings) {
-            const bprops = b.props as { terminal?: "start" | "end" };
-            if (bprops.terminal === "start") fromShapeId = b.toId as unknown as string;
-            else if (bprops.terminal === "end") toShapeId = b.toId as unknown as string;
-          }
-        } catch { /* binding lookup can throw for unbound arrows */ }
+      // Preserve binding targets if the user snapped the arrow ends
+      // onto existing shapes. getBindingsFromShape returns the
+      // arrow's "arrow" bindings (start/end terminals).
+      let fromShapeId = "";
+      let toShapeId = "";
+      try {
+        const bindings = editor.getBindingsFromShape(native.id, "arrow");
+        for (const b of bindings) {
+          const bprops = b.props as { terminal?: "start" | "end" };
+          if (bprops.terminal === "start") fromShapeId = b.toId as unknown as string;
+          else if (bprops.terminal === "end") toShapeId = b.toId as unknown as string;
+        }
+      } catch { /* binding lookup can throw for unbound arrows */ }
 
-        const newId = createShapeId();
+      const newId = createShapeId();
+      try {
         editor.run(() => {
           editor.createShape({
             id: newId,
@@ -1073,10 +1121,49 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           editor.deleteShape(native.id);
           editor.select(newId);
         });
-      });
+      } catch (err) {
+        console.warn("[Directoor] arrow conversion failed", err);
+      }
+    };
+
+    // Schedule a conversion for `id`, or reset the existing timer if the
+    // shape is still being actively modified. Waits until the shape has
+    // been idle 250ms AND the arrow tool is no longer active.
+    const scheduleArrowConversion = (id: TLShapeId) => {
+      const existing = pendingArrowConversions.get(id);
+      if (existing) clearTimeout(existing);
+      const t = setTimeout(() => {
+        pendingArrowConversions.delete(id);
+        // If the arrow tool is still active, the user may be about to
+        // draw another arrow — still safe to convert THIS one since it
+        // was created strictly before the current drag. But defer one
+        // more frame to let any final state-settling happen.
+        queueMicrotask(() => convertArrow(id));
+      }, 250);
+      pendingArrowConversions.set(id, t);
+    };
+
+    const u4 = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
+      if (isLoadingSnapshotRef.current) return;
+      if (shape.type !== "arrow") return;
+      scheduleArrowConversion(shape.id);
     });
 
-    return () => { u1(); u2(); u3(); u4(); };
+    // Every mid-drag change on an arrow with a pending conversion resets
+    // the 250ms idle timer — so we only convert once the user has
+    // actually stopped dragging.
+    const u5 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
+      if (isLoadingSnapshotRef.current) return;
+      if (next.type !== "arrow") return;
+      if (!pendingArrowConversions.has(next.id)) return;
+      scheduleArrowConversion(next.id);
+    });
+
+    return () => {
+      u1(); u2(); u3(); u4(); u5();
+      for (const t of pendingArrowConversions.values()) clearTimeout(t);
+      pendingArrowConversions.clear();
+    };
   }, [editor]);
 
   // ─── React to page-width changes (from drag handle or load) ─────────
