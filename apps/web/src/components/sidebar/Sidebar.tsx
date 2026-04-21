@@ -9,12 +9,10 @@ import {
   LogOut,
   Trash2,
   Loader2,
-  Shapes,
   Image as ImageIcon,
 } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
-import { ShapeLibrary } from "./ShapeLibrary";
 import { ImageLibraryPanel } from "./ImageLibraryPanel";
 import { BillingButton } from "./BillingButton";
 import type { Editor } from "tldraw";
@@ -35,7 +33,10 @@ interface SidebarProps {
   tier?: "free" | "pro";
 }
 
-type SidebarTab = "canvases" | "shapes" | "images";
+// Shapes tab removed — shape creation now lives in the bottom-toolbar
+// DirectoorShapePicker popup (single-click drop). Sidebar retains the
+// canvas list and the image library.
+type SidebarTab = "canvases" | "images";
 
 export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, tier = "free" }: SidebarProps) {
   const { user, signOut } = useAuth();
@@ -168,14 +169,6 @@ export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, 
         </button>
 
         <button
-          onClick={() => { setActiveTab("shapes"); setIsCollapsed(false); }}
-          className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          title="Shape library"
-        >
-          <Shapes size={18} />
-        </button>
-
-        <button
           onClick={() => { setActiveTab("images"); setIsCollapsed(false); }}
           className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
           title="Image library"
@@ -236,17 +229,6 @@ export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, 
           Canvases
         </button>
         <button
-          onClick={() => setActiveTab("shapes")}
-          className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium rounded-t-lg transition-colors ${
-            activeTab === "shapes"
-              ? "text-blue-600 bg-blue-50 border-b-2 border-blue-500 -mb-px"
-              : "text-slate-500 hover:text-slate-700"
-          }`}
-        >
-          <Shapes size={13} />
-          Shapes
-        </button>
-        <button
           onClick={() => setActiveTab("images")}
           className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium rounded-t-lg transition-colors ${
             activeTab === "images"
@@ -258,13 +240,6 @@ export function Sidebar({ currentCanvasId, onSelectCanvas, onNewCanvas, editor, 
           Images
         </button>
       </div>
-
-      {/* Shape library tab */}
-      {activeTab === "shapes" && (
-        <div className="flex-1 flex flex-col min-h-0">
-          <ShapeLibrary editor={editor} />
-        </div>
-      )}
 
       {/* Image library tab */}
       {activeTab === "images" && (

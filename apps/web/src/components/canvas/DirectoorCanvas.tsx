@@ -598,6 +598,7 @@ import { supabase } from "@/lib/supabase";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShareDialog } from "./ShareDialog";
 import { AnimationExportDialog } from "./AnimationExportDialog";
+import { DirectoorShapePicker } from "./DirectoorShapePicker";
 
 /**
  * DirectoorCanvas — The main canvas component
@@ -1410,6 +1411,12 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         components={tlComponents}
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
       />
+
+      {/* Directoor shape picker — anchored to the right edge of tldraw's
+          bottom toolbar. Opens a popup with every archetype from
+          ARCHETYPES (extensible); single-click on canvas drops the
+          selected shape at that point with its default size. */}
+      <DirectoorShapePicker editor={editor} />
 
       {/* Top-right floating toolbar — export + share */}
       <CanvasToolbar

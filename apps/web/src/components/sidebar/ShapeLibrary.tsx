@@ -32,7 +32,19 @@ export interface Archetype {
   defaultFill: string;
 }
 
-const ARCHETYPES: Archetype[] = [
+/**
+ * Central catalog of every Directoor shape that the user can create via
+ * the UI. Adding a new shape = appending one entry here. The catalog is
+ * consumed by:
+ *   - The shape picker popup in the bottom toolbar (DirectoorShapePicker)
+ *   - The drag-and-drop handler in DirectoorCanvas (when legacy)
+ *   - Anywhere we need a human-friendly name + default size + default
+ *     stroke/fill for a given iconShape.
+ *
+ * Kept as a single source of truth to honour the "keep the geo property
+ * extensible" requirement.
+ */
+export const ARCHETYPES: Archetype[] = [
   {
     iconShape: "cylinder",
     displayName: "Cylinder",
@@ -236,7 +248,7 @@ function ArchetypeTile({
 
 // ─── Mini SVG preview for each archetype ─────────────────────────────
 
-function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
+export function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
   const color = archetype.defaultStroke;
   const fill = archetype.defaultFill;
   const w = 56, h = 36;
