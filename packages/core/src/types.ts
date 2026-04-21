@@ -136,7 +136,10 @@ export type IconShape =
   | 'layer'       // ML model layers, stack layers with stripes
   | 'arrow'       // Connection/edge with arrowhead(s)
   | 'line'        // Plain connection/edge (no arrowheads)
-  | 'squiggle'    // Curvy arrow; user can drag the midpoint handle to alter curvature
+  | 'squiggle'    // DEPRECATED — kept for type compatibility with old saves
+  | 'gear'        // Processing / compute / pipeline step
+  | 'error'       // Error / warning / failure — red warning triangle
+  | 'success'     // Success / done / OK — green checkmark
   | 'text'        // Standalone text — movable, rotatable, editable
   | 'image';      // Web image — resizable, movable, rotatable
 

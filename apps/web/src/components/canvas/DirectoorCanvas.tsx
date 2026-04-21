@@ -677,20 +677,29 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       { x: 0, y: 0, z: editorInstance.getCamera().z },
       { immediate: true },
     );
-    // ─── Default styles for newly created shapes ───────────────────
-    // Directoor's house style, applied to tldraw's built-in style
-    // registry so every shape the user creates (native geo, text,
-    // notes, native arrow, AND our Directoor custom shapes) starts
-    // with the same clean defaults:
-    //   • dash: solid   (no sketchy outline)
-    //   • size: s       (compact labels)
-    //   • font: sans    (Inter-like, legible)
-    // Users can override via the style panel on any selected shape.
-    editorInstance.setStyleForNextShapes(DefaultDashStyle, "solid");
-    editorInstance.setStyleForNextShapes(DefaultSizeStyle, "s");
-    editorInstance.setStyleForNextShapes(DefaultFontStyle, "sans");
     onEditorReady?.(editorInstance);
   }, [onEditorReady]);
+
+  // ─── House default styles for newly created shapes ───────────────
+  // Directoor's house style: solid / s / sans. Applied here (AFTER
+  // handleMount AND any loadCanvas restore) because calling it only
+  // inside handleMount was getting overwritten by tldraw's own
+  // per-user persisted preferences when the editor hydrated. This
+  // effect runs every render-triggering dependency change and is
+  // cheap (three setters). Final say on defaults belongs to us.
+  useEffect(() => {
+    if (!editor) return;
+    const apply = () => {
+      editor.setStyleForNextShapes(DefaultDashStyle, "solid");
+      editor.setStyleForNextShapes(DefaultSizeStyle, "s");
+      editor.setStyleForNextShapes(DefaultFontStyle, "sans");
+    };
+    apply();
+    // Re-apply a short moment later in case tldraw's async user-
+    // preference hydration runs after this tick and clobbers us.
+    const id = setTimeout(apply, 250);
+    return () => clearTimeout(id);
+  }, [editor, canvasId]);
 
   // ─── Auto-save with race-condition protection ────────────────
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

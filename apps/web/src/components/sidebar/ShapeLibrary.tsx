@@ -95,11 +95,25 @@ export const ARCHETYPES: Archetype[] = [
     defaultStroke: "#1D4ED8", defaultFill: "#EFF6FF",
   },
   {
-    iconShape: "squiggle",
-    displayName: "Squiggle",
-    exampleUses: ["wavy arrow", "loose connection", "flowing", "fuzzy link", "irregular"],
-    defaultWidth: 200, defaultHeight: 0,
-    defaultStroke: "#334155", defaultFill: "#FFFFFF",
+    iconShape: "gear",
+    displayName: "Gear",
+    exampleUses: ["processing", "compute", "pipeline", "transform", "etl", "job", "worker"],
+    defaultWidth: 110, defaultHeight: 110,
+    defaultStroke: "#475569", defaultFill: "#F1F5F9",
+  },
+  {
+    iconShape: "error",
+    displayName: "Error",
+    exampleUses: ["error", "failure", "exception", "warning", "alert", "incident"],
+    defaultWidth: 110, defaultHeight: 100,
+    defaultStroke: "#DC2626", defaultFill: "#FEF2F2",
+  },
+  {
+    iconShape: "success",
+    displayName: "Success",
+    exampleUses: ["success", "completed", "ok", "done", "healthy", "pass"],
+    defaultWidth: 100, defaultHeight: 100,
+    defaultStroke: "#16A34A", defaultFill: "#F0FDF4",
   },
 ];
 
@@ -304,14 +318,87 @@ export function ArchetypeIcon({ archetype }: { archetype: Archetype }) {
         </svg>
       );
     }
-    case "squiggle": {
-      // Cubic bezier squiggle with an arrowhead — communicates the
-      // shape is a wavy/editable connector.
-      const path = `M 4,${h / 2} C ${w * 0.3},4 ${w * 0.55},${h - 4} ${w - 10},${h / 2}`;
+    case "gear": {
+      // Gear icon — teeth around a central circle. Represents
+      // processing / compute / a configurable step.
+      const cx = w / 2;
+      const cy = h / 2;
+      const rOuter = Math.min(w, h) / 2 - 2;
+      const rInner = rOuter * 0.65;
+      const rHole = rOuter * 0.22;
+      const teeth = 8;
+      const toothDepth = rOuter * 0.18;
+      const path = [];
+      for (let i = 0; i < teeth; i++) {
+        const a0 = (i / teeth) * Math.PI * 2 - Math.PI / 2;
+        const a1 = ((i + 0.5) / teeth) * Math.PI * 2 - Math.PI / 2;
+        const a2 = ((i + 1) / teeth) * Math.PI * 2 - Math.PI / 2;
+        // Tip of this tooth
+        const tipOuter = rInner + toothDepth;
+        const xT0 = cx + Math.cos(a0) * tipOuter;
+        const yT0 = cy + Math.sin(a0) * tipOuter;
+        const xT1 = cx + Math.cos(a1) * tipOuter;
+        const yT1 = cy + Math.sin(a1) * tipOuter;
+        // Valley between teeth
+        const xV = cx + Math.cos(a2) * rInner;
+        const yV = cy + Math.sin(a2) * rInner;
+        if (i === 0) path.push(`M ${xT0} ${yT0}`);
+        path.push(`L ${xT1} ${yT1}`);
+        path.push(`L ${xV} ${yV}`);
+      }
+      path.push("Z");
       return (
         <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
-          <path d={path} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" />
-          <polygon points={`${w - 10},${h / 2 - 5} ${w - 2},${h / 2} ${w - 10},${h / 2 + 5}`} fill={color} />
+          <path d={path.join(" ")} fill={fill} stroke={color} strokeWidth={1.6} strokeLinejoin="round" />
+          <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={1.6} />
+        </svg>
+      );
+    }
+    case "error": {
+      // Warning triangle with a vertical ! inside. Red stroke, pale
+      // red fill — standard ISO 7010 W-series warning visual.
+      const stroke = "#DC2626";
+      const inset = 2;
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <polygon
+            points={`${w / 2},${inset} ${w - inset},${h - inset} ${inset},${h - inset}`}
+            fill="#FEF2F2"
+            stroke={stroke}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+          />
+          <line
+            x1={w / 2}
+            y1={h * 0.38}
+            x2={w / 2}
+            y2={h * 0.68}
+            stroke={stroke}
+            strokeWidth={2}
+            strokeLinecap="round"
+          />
+          <circle cx={w / 2} cy={h * 0.82} r={1.4} fill={stroke} />
+        </svg>
+      );
+    }
+    case "success": {
+      // Green circle with a white checkmark inside. Pairs visually
+      // with the error triangle.
+      const stroke = "#16A34A";
+      const cx = w / 2;
+      const cy = h / 2;
+      const r = Math.min(w, h) / 2 - 2;
+      return (
+        <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+          <circle cx={cx} cy={cy} r={r} fill="#16A34A" stroke={stroke} strokeWidth={1.8} />
+          <path
+            d={`M ${cx - r * 0.5} ${cy} L ${cx - r * 0.1} ${cy + r * 0.35} L ${cx + r * 0.55} ${cy - r * 0.35}`}
+            fill="none"
+            stroke="#FFFFFF"
+            strokeWidth={2.6}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
       );
     }
@@ -396,19 +483,13 @@ export function createArchetypeShape(
 ) {
   const tlId = createShapeId();
 
-  if (
-    archetype.iconShape === "arrow" ||
-    archetype.iconShape === "line" ||
-    archetype.iconShape === "squiggle"
-  ) {
-    // Arrow / Line / Squiggle all use DirectoorArrow — they differ only in
-    // path kind and head configuration.
-    //   arrow    → straight + head at end
-    //   line     → straight + no heads
-    //   squiggle → squiggle path + head at end (user-editable via the
-    //              midpoint handle — drags update props.squiggleOffset)
+  if (archetype.iconShape === "arrow" || archetype.iconShape === "line") {
+    // Arrow + Line both use DirectoorArrow. Line is just an arrow with
+    // both heads set to "none". Squiggle used to be a variant here but
+    // was removed per user request — old squiggle shapes still render
+    // (back-compat in DirectoorArrowComponent); we just no longer offer
+    // it from the picker.
     const isLine = archetype.iconShape === "line";
-    const isSquiggle = archetype.iconShape === "squiggle";
     editor.createShape({
       id: tlId,
       type: "directoor-arrow",
@@ -428,13 +509,15 @@ export function createArchetypeShape(
         dash: "solid",
         startHead: "none",
         endHead: isLine ? "none" : "arrow",
-        path: isSquiggle ? "squiggle" : "straight",
-        squiggleOffset: isSquiggle ? 36 : 0,
+        path: "straight",
+        squiggleOffset: 0,
+        bend1Offset: 0,
+        bend2Offset: 0,
+        bend3Offset: 0,
         label: "",
         labelPosition: 0.5,
       },
     });
-    // Arrows/lines/squiggles don't get auto-edit (empty label by default)
     setTimeout(() => editor.select(tlId), 50);
     return tlId;
   }

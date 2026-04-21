@@ -297,6 +297,13 @@ function executeAction(
           startHead: conn.style.startHead === "none" ? "none" : "arrow",
           endHead: conn.style.endHead === "none" ? "none" : "arrow",
           path: conn.style.path === "straight" ? "straight" : "elbow",
+          // Bend offsets all default to 0 — LLM connections start as
+          // straight/elbow; user can drag the bend handles afterwards
+          // to shape the path if they want. squiggleOffset is legacy.
+          squiggleOffset: 0,
+          bend1Offset: 0,
+          bend2Offset: 0,
+          bend3Offset: 0,
           label: conn.label || "",
           labelPosition: 0.5,
         },

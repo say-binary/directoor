@@ -212,6 +212,9 @@ export function defaultStyleForSemanticType(semanticType: string): { stroke: str
     arrow:     { stroke: '#334155', fill: '#FFFFFF' },
     line:      { stroke: '#334155', fill: '#FFFFFF' },
     squiggle:  { stroke: '#334155', fill: '#FFFFFF' },
+    gear:      { stroke: '#475569', fill: '#F1F5F9' },
+    error:     { stroke: '#DC2626', fill: '#FEF2F2' },
+    success:   { stroke: '#16A34A', fill: '#F0FDF4' },
     text:      { stroke: '#0F172A', fill: 'transparent' },
     image:     { stroke: '#94A3B8', fill: '#F1F5F9' },
   };

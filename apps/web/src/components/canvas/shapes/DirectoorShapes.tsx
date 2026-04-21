@@ -265,6 +265,9 @@ const DIRECTOOR_STYLED_TYPES = new Set([
   "directoor-document",
   "directoor-stack",
   "directoor-queue",
+  "directoor-gear",
+  "directoor-error",
+  "directoor-success",
   "directoor-arrow",
 ]);
 
@@ -316,11 +319,23 @@ export function normalizeDirectoorShapeStyles<T extends { type: string; props?: 
   // new sharedProps.
   const isArrow = shape.type === "directoor-arrow";
   if (isArrow) {
-    // Migrate arrow records that predate the squiggle variant — they're
-    // missing `squiggleOffset`, which the validator now requires. Also
-    // map any unknown `path` value to "straight" so validation passes.
+    // Migrate arrow records that predate newer props. All new arrows
+    // carry squiggleOffset (deprecated but kept), and three bend-point
+    // offsets for the straight path. Older records default them to 0.
     if (typeof props.squiggleOffset !== "number") {
       next.squiggleOffset = 0;
+      changed = true;
+    }
+    if (typeof props.bend1Offset !== "number") {
+      next.bend1Offset = 0;
+      changed = true;
+    }
+    if (typeof props.bend2Offset !== "number") {
+      next.bend2Offset = 0;
+      changed = true;
+    }
+    if (typeof props.bend3Offset !== "number") {
+      next.bend3Offset = 0;
       changed = true;
     }
     const validPaths = new Set(["straight", "elbow", "squiggle"]);
@@ -1111,6 +1126,187 @@ export class DirectoorQueueShapeUtil extends BaseBoxShapeUtil<DirectoorQueueShap
   }
 }
 
+// ─── Gear Shape (processing / compute / pipeline step) ─────────────
+
+export type DirectoorGearShape = TLBaseShape<"directoor-gear", DirectoorShapeProps>;
+
+/** Build a gear SVG path with `teeth` teeth around a circle of `rInner`
+ *  with tooth length `toothDepth`, centred at (cx, cy). */
+function gearPath(cx: number, cy: number, rInner: number, toothDepth: number, teeth: number): string {
+  const tipOuter = rInner + toothDepth;
+  const parts: string[] = [];
+  for (let i = 0; i < teeth; i++) {
+    const a0 = (i / teeth) * Math.PI * 2 - Math.PI / 2;
+    const a1 = ((i + 0.5) / teeth) * Math.PI * 2 - Math.PI / 2;
+    const a2 = ((i + 1) / teeth) * Math.PI * 2 - Math.PI / 2;
+    const xT0 = cx + Math.cos(a0) * tipOuter;
+    const yT0 = cy + Math.sin(a0) * tipOuter;
+    const xT1 = cx + Math.cos(a1) * tipOuter;
+    const yT1 = cy + Math.sin(a1) * tipOuter;
+    const xV = cx + Math.cos(a2) * rInner;
+    const yV = cy + Math.sin(a2) * rInner;
+    if (i === 0) parts.push(`M ${xT0} ${yT0}`);
+    parts.push(`L ${xT1} ${yT1}`);
+    parts.push(`L ${xV} ${yV}`);
+  }
+  parts.push("Z");
+  return parts.join(" ");
+}
+
+export class DirectoorGearShapeUtil extends BaseBoxShapeUtil<DirectoorGearShape> {
+  static override type = "directoor-gear" as const;
+  static override props = sharedProps as RecordProps<DirectoorGearShape>;
+
+  override canEdit(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorShapeProps {
+    return { ...defaultProps, w: 110, h: 110 };
+  }
+
+  override getGeometry(shape: DirectoorGearShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorGearShape) {
+    const { w, h, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
+    const dashArray = strokeDashArray(dash);
+    const size = Math.min(w, h);
+    const cx = w / 2;
+    const cy = h / 2;
+    const rOuter = size / 2 - 2;
+    const rInner = rOuter * 0.65;
+    const toothDepth = rOuter * 0.18;
+    const rHole = rOuter * 0.22;
+    const d = gearPath(cx, cy, rInner, toothDepth, 8);
+
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
+          <path d={d} fill={fill} stroke={color} strokeWidth={2} strokeDasharray={dashArray} strokeLinejoin="round" />
+          <circle cx={cx} cy={cy} r={rHole} fill="none" stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
+        </svg>
+        <DirectoorShapeLabel shape={shape} bottomAnchored />
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorGearShape) {
+    return <rect width={shape.props.w} height={shape.props.h} rx={4} />;
+  }
+}
+
+// ─── Error Shape (warning triangle with ! inside) ──────────────────
+
+export type DirectoorErrorShape = TLBaseShape<"directoor-error", DirectoorShapeProps>;
+
+export class DirectoorErrorShapeUtil extends BaseBoxShapeUtil<DirectoorErrorShape> {
+  static override type = "directoor-error" as const;
+  static override props = sharedProps as RecordProps<DirectoorErrorShape>;
+
+  override canEdit(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorShapeProps {
+    return { ...defaultProps, w: 110, h: 100, color: "red", fill: "solid" };
+  }
+
+  override getGeometry(shape: DirectoorErrorShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorErrorShape) {
+    const { w, h, dash } = shape.props;
+    const { stroke: color, fill } = resolveShapeColors(shape.props.color, shape.props.fill);
+    const dashArray = strokeDashArray(dash);
+
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
+          {/* Triangle */}
+          <polygon
+            points={`${w / 2},2 ${w - 2},${h - 2} 2,${h - 2}`}
+            fill={fill}
+            stroke={color}
+            strokeWidth={2.5}
+            strokeDasharray={dashArray}
+            strokeLinejoin="round"
+          />
+          {/* Exclamation body */}
+          <line
+            x1={w / 2}
+            y1={h * 0.38}
+            x2={w / 2}
+            y2={h * 0.68}
+            stroke={color}
+            strokeWidth={3}
+            strokeLinecap="round"
+          />
+          {/* Exclamation dot */}
+          <circle cx={w / 2} cy={h * 0.82} r={2.4} fill={color} />
+        </svg>
+        <DirectoorShapeLabel shape={shape} bottomAnchored />
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorErrorShape) {
+    return <rect width={shape.props.w} height={shape.props.h} rx={4} />;
+  }
+}
+
+// ─── Success Shape (green filled circle with white checkmark) ──────
+
+export type DirectoorSuccessShape = TLBaseShape<"directoor-success", DirectoorShapeProps>;
+
+export class DirectoorSuccessShapeUtil extends BaseBoxShapeUtil<DirectoorSuccessShape> {
+  static override type = "directoor-success" as const;
+  static override props = sharedProps as RecordProps<DirectoorSuccessShape>;
+
+  override canEdit(): boolean { return true; }
+
+  override getDefaultProps(): DirectoorShapeProps {
+    return { ...defaultProps, w: 100, h: 100, color: "green", fill: "solid" };
+  }
+
+  override getGeometry(shape: DirectoorSuccessShape): Geometry2d {
+    return new Rectangle2d({ width: shape.props.w, height: shape.props.h, isFilled: true });
+  }
+
+  override component(shape: DirectoorSuccessShape) {
+    const { w, h, dash } = shape.props;
+    // The success shape is intentionally bold — filled green circle
+    // with a white checkmark — so it reads at a glance. The shape's
+    // stroke/fill STYLE props still apply (user can recolour it), but
+    // the checkmark contrast is fixed to white for readability.
+    const { stroke: color } = resolveShapeColors(shape.props.color, shape.props.fill);
+    const dashArray = strokeDashArray(dash);
+    const cx = w / 2;
+    const cy = h / 2;
+    const r = Math.min(w, h) / 2 - 2;
+
+    return (
+      <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
+        <svg width={w} height={h} style={{ position: "absolute", inset: 0 }}>
+          <circle cx={cx} cy={cy} r={r} fill={color} stroke={color} strokeWidth={2} strokeDasharray={dashArray} />
+          <path
+            d={`M ${cx - r * 0.5} ${cy} L ${cx - r * 0.1} ${cy + r * 0.35} L ${cx + r * 0.55} ${cy - r * 0.35}`}
+            fill="none"
+            stroke="#FFFFFF"
+            strokeWidth={Math.max(3, r * 0.14)}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+        <DirectoorShapeLabel shape={shape} bottomAnchored />
+      </HTMLContainer>
+    );
+  }
+
+  override indicator(shape: DirectoorSuccessShape) {
+    return <ellipse cx={shape.props.w / 2} cy={shape.props.h / 2} rx={shape.props.w / 2} ry={shape.props.h / 2} />;
+  }
+}
+
 // ─── Image Shape (web image dropped onto canvas) ────────────────────
 // A first-class image shape: resizable, movable, rotatable, and
 // participates in prose-text wrapping (treated as an obstacle by
@@ -1828,9 +2024,20 @@ interface DirectoorArrowProps {
   startHead: "none" | "arrow";
   endHead: "none" | "arrow";
   path: "straight" | "elbow" | "squiggle";
-  /** Squiggle midpoint perpendicular offset (px); user-editable via the
-   *  midpoint handle when path === "squiggle". 0 for other paths. */
+  /** Squiggle midpoint perpendicular offset (px); DEPRECATED (squiggle
+   *  variant removed from UI; kept so old arrow saves still validate &
+   *  render). For new arrows, the bend-point props below replace this. */
   squiggleOffset: number;
+  /** Three user-draggable bend points on the STRAIGHT path. Each is
+   *  the perpendicular offset (in px) of a control point placed at
+   *  25 %, 50 %, 75 % along the baseline. All-zero offsets render as a
+   *  visually straight line; dragging any handle deforms the path
+   *  into a smooth bezier through the three bend points. This makes
+   *  the default arrow much more flexible than the previous single
+   *  midpoint handle (user request: "add 2 more bend points"). */
+  bend1Offset: number;
+  bend2Offset: number;
+  bend3Offset: number;
   label: string;
   /** 0..1 position along the path where the label sits. 0 = start, 1 = end. */
   labelPosition: number;
@@ -1851,12 +2058,15 @@ const arrowProps: RecordProps<TLBaseShape<"directoor-arrow", DirectoorArrowProps
   startHead: T.literalEnum("none", "arrow"),
   endHead: T.literalEnum("none", "arrow"),
   path: T.literalEnum("straight", "elbow", "squiggle"),
-  // Perpendicular offset (in px) of the squiggle's midpoint control
-  // point relative to the straight baseline between start and end.
-  // Positive = curve "above" the baseline in screen space; negative =
-  // curve the other direction. User can drag the midpoint handle to
-  // alter this live; has no visual effect for straight / elbow paths.
+  // DEPRECATED squiggle variant's midpoint offset — kept so old saves
+  // still validate. New straight-path arrows use the three bend props
+  // below instead.
   squiggleOffset: T.number,
+  // Perpendicular offsets for three user-draggable bend points on the
+  // STRAIGHT path. See DirectoorArrowProps for full semantics.
+  bend1Offset: T.number,
+  bend2Offset: T.number,
+  bend3Offset: T.number,
   label: T.string,
   labelPosition: T.number,
 };
@@ -1872,6 +2082,9 @@ const arrowDefaults: DirectoorArrowProps = {
   endHead: "arrow",
   path: "elbow",
   squiggleOffset: 0,
+  bend1Offset: 0,
+  bend2Offset: 0,
+  bend3Offset: 0,
   label: "",
   labelPosition: 0.5,
 };
@@ -2027,25 +2240,61 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
    * is fully determined by the endpoints — so they return no handles.
    */
   override getHandles(shape: DirectoorArrowShape): TLHandle[] {
-    if (shape.props.path !== "squiggle") return [];
+    const path = shape.props.path;
+    // Legacy squiggle: single midpoint handle (for old saved shapes).
+    // Straight: three bend handles at 25/50/75 along baseline.
+    // Elbow: no handles (L-shape is determined by endpoints).
+    if (path === "elbow") return [];
+
     const { sx, sy, ex, ey } = this.computeEndpoints(shape);
     const lsx = sx - shape.x;
     const lsy = sy - shape.y;
     const lex = ex - shape.x;
     const ley = ey - shape.y;
-    const midX = (lsx + lex) / 2;
-    const midY = (lsy + ley) / 2;
     const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
     const perpX = -(ley - lsy) / baselineLen;
     const perpY = (lex - lsx) / baselineLen;
-    const offset = shape.props.squiggleOffset ?? 0;
+
+    if (path === "squiggle") {
+      const midX = (lsx + lex) / 2;
+      const midY = (lsy + ley) / 2;
+      const offset = shape.props.squiggleOffset ?? 0;
+      return [
+        {
+          id: "squiggle-mid",
+          type: "virtual",
+          index: "a1" as never,
+          x: midX + perpX * offset,
+          y: midY + perpY * offset,
+        },
+      ];
+    }
+
+    // path === "straight": three bend handles at 25/50/75.
+    const b1o = shape.props.bend1Offset ?? 0;
+    const b2o = shape.props.bend2Offset ?? 0;
+    const b3o = shape.props.bend3Offset ?? 0;
     return [
       {
-        id: "squiggle-mid",
+        id: "bend-1",
         type: "virtual",
         index: "a1" as never,
-        x: midX + perpX * offset,
-        y: midY + perpY * offset,
+        x: lsx + (lex - lsx) * 0.25 + perpX * b1o,
+        y: lsy + (ley - lsy) * 0.25 + perpY * b1o,
+      },
+      {
+        id: "bend-2",
+        type: "virtual",
+        index: "a2" as never,
+        x: lsx + (lex - lsx) * 0.5 + perpX * b2o,
+        y: lsy + (ley - lsy) * 0.5 + perpY * b2o,
+      },
+      {
+        id: "bend-3",
+        type: "virtual",
+        index: "a3" as never,
+        x: lsx + (lex - lsx) * 0.75 + perpX * b3o,
+        y: lsy + (ley - lsy) * 0.75 + perpY * b3o,
       },
     ];
   }
@@ -2054,29 +2303,36 @@ export class DirectoorArrowShapeUtil extends ShapeUtil<DirectoorArrowShape> {
     shape: DirectoorArrowShape,
     { handle }: { handle: { id: string; x: number; y: number } },
   ): DirectoorArrowShape | void {
-    if (handle.id !== "squiggle-mid") return;
     const { sx, sy, ex, ey } = this.computeEndpoints(shape);
     const lsx = sx - shape.x;
     const lsy = sy - shape.y;
     const lex = ex - shape.x;
     const ley = ey - shape.y;
-    const midX = (lsx + lex) / 2;
-    const midY = (lsy + ley) / 2;
     const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
     const perpX = -(ley - lsy) / baselineLen;
     const perpY = (lex - lsx) / baselineLen;
-    // Project the handle's position onto the perpendicular axis at the
-    // midpoint — that projection IS the new squiggleOffset. Clamp to a
-    // reasonable range so users can't spiral the shape infinitely.
-    const dx = handle.x - midX;
-    const dy = handle.y - midY;
-    const rawOffset = dx * perpX + dy * perpY;
     const MAX = 400;
-    const nextOffset = Math.max(-MAX, Math.min(MAX, rawOffset));
-    if (nextOffset === shape.props.squiggleOffset) return;
+
+    // For each handle: find its baseline anchor, project the drag
+    // delta onto the perpendicular axis, clamp, write the correct prop.
+    const handleMap: Record<string, { t: number; prop: "squiggleOffset" | "bend1Offset" | "bend2Offset" | "bend3Offset" }> = {
+      "squiggle-mid": { t: 0.5, prop: "squiggleOffset" },
+      "bend-1": { t: 0.25, prop: "bend1Offset" },
+      "bend-2": { t: 0.5, prop: "bend2Offset" },
+      "bend-3": { t: 0.75, prop: "bend3Offset" },
+    };
+    const entry = handleMap[handle.id];
+    if (!entry) return;
+    const anchorX = lsx + (lex - lsx) * entry.t;
+    const anchorY = lsy + (ley - lsy) * entry.t;
+    const dx = handle.x - anchorX;
+    const dy = handle.y - anchorY;
+    const raw = dx * perpX + dy * perpY;
+    const nextOffset = Math.max(-MAX, Math.min(MAX, raw));
+    if (nextOffset === shape.props[entry.prop]) return;
     return {
       ...shape,
-      props: { ...shape.props, squiggleOffset: nextOffset },
+      props: { ...shape.props, [entry.prop]: nextOffset },
     };
   }
 
@@ -2130,43 +2386,91 @@ function DirectoorArrowComponent({ util, shape }: { util: DirectoorArrowShapeUti
   const lex = ex - minX;
   const ley = ey - minY;
 
-  // ─── Squiggle midpoint + control points ────────────────────────
-  // The squiggle is a cubic bezier from start to end, with two control
-  // points placed 1/3 and 2/3 along the baseline, offset on OPPOSITE
-  // perpendicular sides by `squiggleOffset`. This creates a natural
-  // S-curve. The user drags the midpoint handle (see getHandles on the
-  // shape util) to alter squiggleOffset in real time.
+  // ─── Bend-point + squiggle control-point math ─────────────────
+  //
+  // For path="straight": we render a cubic bezier that passes through
+  // three user-draggable bend points at 25%, 50%, 75% along the
+  // baseline. Each bend point is displaced perpendicularly from the
+  // baseline by the corresponding bendNOffset prop. When all three
+  // offsets are 0 the bezier collapses onto the straight baseline and
+  // renders as a straight line — so the "straight" variant is a
+  // superset of the old straight rendering.
+  //
+  // For path="squiggle" (deprecated — old saves only): the existing
+  // S-curve between two control points at 1/3 and 2/3 is preserved.
+  //
+  // For path="elbow": unchanged L-shape, independent of bend props.
   const midX = (lsx + lex) / 2;
   const midY = (lsy + ley) / 2;
   const baselineLen = Math.max(1, Math.hypot(lex - lsx, ley - lsy));
-  // Perpendicular unit vector (rotate baseline 90° CCW)
   const perpX = -(ley - lsy) / baselineLen;
   const perpY = (lex - lsx) / baselineLen;
+
+  // Three bend points along the baseline (straight path only).
+  const b1o = shape.props.bend1Offset ?? 0;
+  const b2o = shape.props.bend2Offset ?? 0;
+  const b3o = shape.props.bend3Offset ?? 0;
+  const bend1X = lsx + (lex - lsx) * 0.25 + perpX * b1o;
+  const bend1Y = lsy + (ley - lsy) * 0.25 + perpY * b1o;
+  const bend2X = lsx + (lex - lsx) * 0.5 + perpX * b2o;
+  const bend2Y = lsy + (ley - lsy) * 0.5 + perpY * b2o;
+  const bend3X = lsx + (lex - lsx) * 0.75 + perpX * b3o;
+  const bend3Y = lsy + (ley - lsy) * 0.75 + perpY * b3o;
+
+  // Squiggle control points (legacy variant only).
   const squiggleOffset = shape.props.squiggleOffset ?? 0;
-  const c1X = lsx + (lex - lsx) * (1 / 3) + perpX * squiggleOffset;
-  const c1Y = lsy + (ley - lsy) * (1 / 3) + perpY * squiggleOffset;
-  const c2X = lsx + (lex - lsx) * (2 / 3) - perpX * squiggleOffset;
-  const c2Y = lsy + (ley - lsy) * (2 / 3) - perpY * squiggleOffset;
+  const sqC1X = lsx + (lex - lsx) * (1 / 3) + perpX * squiggleOffset;
+  const sqC1Y = lsy + (ley - lsy) * (1 / 3) + perpY * squiggleOffset;
+  const sqC2X = lsx + (lex - lsx) * (2 / 3) - perpX * squiggleOffset;
+  const sqC2Y = lsy + (ley - lsy) * (2 / 3) - perpY * squiggleOffset;
 
   // Build path
   let pathD: string;
   if (path === "elbow") {
     pathD = `M ${lsx} ${lsy} L ${midX} ${lsy} L ${midX} ${ley} L ${lex} ${ley}`;
   } else if (path === "squiggle") {
-    pathD = `M ${lsx} ${lsy} C ${c1X} ${c1Y} ${c2X} ${c2Y} ${lex} ${ley}`;
+    pathD = `M ${lsx} ${lsy} C ${sqC1X} ${sqC1Y} ${sqC2X} ${sqC2Y} ${lex} ${ley}`;
+  } else if (b1o !== 0 || b2o !== 0 || b3o !== 0) {
+    // Straight-with-bends: smooth cubic bezier through the 3 bend
+    // points. We use SVG's `S` shorthand to chain beziers so the
+    // curve passes smoothly through each bend.
+    pathD =
+      `M ${lsx} ${lsy} ` +
+      `Q ${bend1X} ${bend1Y} ${bend2X} ${bend2Y} ` +
+      `T ${bend3X} ${bend3Y} ` +
+      `T ${lex} ${ley}`;
   } else {
+    // All bends at 0 → render as a pure straight line for crispness.
     pathD = `M ${lsx} ${lsy} L ${lex} ${ley}`;
   }
 
-  // Arrowhead angles — for squiggle, use the tangent of the curve at
-  // its endpoints, which is the direction from the adjacent control
-  // point toward the endpoint.
+  // Arrowhead tangent — direction the arrow is "heading" at each
+  // endpoint. Straight: along the baseline. Elbow: along the final
+  // segment. Squiggle: from the second control point. Bent-straight:
+  // from bend3 toward end.
   const headSize = 11;
-  const lastFromX = path === "elbow" ? midX : path === "squiggle" ? c2X : lsx;
-  const lastFromY = path === "elbow" ? ley : path === "squiggle" ? c2Y : lsy;
+  const hasBends = b1o !== 0 || b2o !== 0 || b3o !== 0;
+  const lastFromX =
+    path === "elbow" ? midX :
+    path === "squiggle" ? sqC2X :
+    hasBends ? bend3X :
+    lsx;
+  const lastFromY =
+    path === "elbow" ? ley :
+    path === "squiggle" ? sqC2Y :
+    hasBends ? bend3Y :
+    lsy;
   const angleEnd = Math.atan2(ley - lastFromY, lex - lastFromX);
-  const firstToX = path === "elbow" ? midX : path === "squiggle" ? c1X : lex;
-  const firstToY = path === "elbow" ? lsy : path === "squiggle" ? c1Y : ley;
+  const firstToX =
+    path === "elbow" ? midX :
+    path === "squiggle" ? sqC1X :
+    hasBends ? bend1X :
+    lex;
+  const firstToY =
+    path === "elbow" ? lsy :
+    path === "squiggle" ? sqC1Y :
+    hasBends ? bend1Y :
+    ley;
   const angleStart = Math.atan2(lsy - firstToY, lsx - firstToX);
 
   const headPath = (x: number, y: number, angle: number) => {
@@ -2239,6 +2543,9 @@ export const DIRECTOOR_SHAPE_UTILS = [
   DirectoorPillShapeUtil,
   DirectoorLayerShapeUtil,
   DirectoorQueueShapeUtil,
+  DirectoorGearShapeUtil,
+  DirectoorErrorShapeUtil,
+  DirectoorSuccessShapeUtil,
   DirectoorTextShapeUtil,
   DirectoorImageShapeUtil,
   DirectoorArrowShapeUtil,
@@ -2261,9 +2568,12 @@ export function iconShapeToTldrawType(iconShape: string): string {
     case "pill":     return "directoor-pill";
     case "layer":    return "directoor-layer";
     case "queue":    return "directoor-queue";
+    case "gear":     return "directoor-gear";
+    case "error":    return "directoor-error";
+    case "success":  return "directoor-success";
     case "arrow":    return "directoor-arrow";
     case "line":     return "directoor-arrow"; // line = arrow with no heads
-    case "squiggle": return "directoor-arrow"; // squiggle = arrow with path="squiggle"
+    case "squiggle": return "directoor-arrow"; // deprecated — renders old saves only
     case "text":     return "directoor-text";
     case "image":    return "directoor-image";
     case "rectangle":
