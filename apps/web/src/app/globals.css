@@ -30,11 +30,12 @@ body,
   height: 100%;
 }
 
-/* Inset the tldraw editor on the LEFT only (after the sidebar). Right
-   edge reaches the viewport edge — toolbar floats on top of it. */
+/* Inset the tldraw editor on the LEFT (after the sidebar) and TOP so the
+   grey "desk" strip around the canvas signals where the canvas begins.
+   Right edge reaches the viewport edge — toolbar floats on top of it. */
 .tldraw-container > .tl-container {
   position: absolute !important;
-  top: 0;
+  top: 8px;
   bottom: 0;
   left: calc(var(--ds-sidebar-w, 0px) + 8px);
   right: 0 !important;
@@ -72,6 +73,32 @@ body,
    invariant. */
 body[data-directoor-style-collapsed="true"] .tlui-rich-text__toolbar {
   display: none !important;
+}
+
+/* Overlay the tldraw watermark with our own "Directoor" wordmark so the
+   brand reads consistently. The watermark div stays in the DOM (and
+   keeps its own layout/size) — we just hide the inner mask-image button
+   and paint our text on top via ::after, matching tldraw's vertical
+   orientation. */
+.tl-watermark_SEE-LICENSE {
+  position: relative;
+}
+.tl-watermark_SEE-LICENSE > button {
+  visibility: hidden;
+}
+.tl-watermark_SEE-LICENSE::after {
+  content: "Directoor";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  white-space: nowrap;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748B;
+  pointer-events: none;
 }
 
 /* Hide tldraw's native "asset" (image upload) tool button in the
