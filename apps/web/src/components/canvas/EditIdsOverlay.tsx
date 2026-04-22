@@ -100,21 +100,97 @@ export function EditIdsOverlay({ editor, enabled, registry, animationShapeIds }:
     // Make sure every current shape has an id before we render.
     ensureEditIds(registry, shapes);
 
+    /**
+     * Place each chip ON the shape it refers to, and (subject to that
+     * constraint) as far from every other chip as possible so clusters
+     * of shapes don't produce a wall of ambiguous labels.
+     *
+     * Algorithm: for each shape we compute a set of in-bounds candidate
+     * anchor points (4 corners + centre for normal shapes, just the
+     * centre for thin/small shapes where a corner would fall outside
+     * the visible geometry, e.g. arrows or tiny icons). We then assign
+     * placements greedily in page space — for each shape pick the
+     * candidate that maximises the minimum distance to all already-
+     * placed chips. Greedy on this objective is order-dependent but a
+     * single pass is enough for practical cluster sizes.
+     */
+    const PAD = 14; // inset from corner toward centre, in page units
+    type Candidate = { x: number; y: number };
+    const candidatesFor = (b: { x: number; y: number; w: number; h: number }): Candidate[] => {
+      const cx = b.x + b.w / 2;
+      const cy = b.y + b.h / 2;
+      if (b.w < 44 || b.h < 34) {
+        // Thin or tiny (arrows, lines, narrow icons) — only the centre
+        // is reliably on the shape's visible geometry.
+        return [{ x: cx, y: cy }];
+      }
+      const ix = Math.max(PAD, Math.min(b.w / 2, PAD));
+      const iy = Math.max(PAD, Math.min(b.h / 2, PAD));
+      return [
+        { x: b.x + ix, y: b.y + iy },
+        { x: b.x + b.w - ix, y: b.y + iy },
+        { x: b.x + ix, y: b.y + b.h - iy },
+        { x: b.x + b.w - ix, y: b.y + b.h - iy },
+        { x: cx, y: cy },
+      ];
+    };
+
     const update = () => {
-      const next: Array<{ editId: string; shapeId: string; x: number; y: number; stacked: boolean }> = [];
+      // Gather renderable shapes once with their bounds + candidates.
+      const entries: Array<{
+        shape: (typeof shapes)[number];
+        editId: string;
+        candidates: Candidate[];
+        bounds: { x: number; y: number; w: number; h: number };
+      }> = [];
       for (const shape of shapes) {
         const editId = registry.byShapeId.get(shape.id);
         if (!editId) continue;
         const bounds = editor.getShapePageBounds(shape.id);
         if (!bounds) continue;
-        // Anchor: top-right corner of the shape bounds, projected to screen.
-        const pt = editor.pageToScreen({ x: bounds.x + bounds.w, y: bounds.y });
+        entries.push({ shape, editId, candidates: candidatesFor(bounds), bounds });
+      }
+
+      // Assign placements greedily: for stability, visit shapes in a
+      // deterministic order (by shape id) so positions don't jitter
+      // between polls when the shape set hasn't changed.
+      entries.sort((a, b) => (a.shape.id < b.shape.id ? -1 : a.shape.id > b.shape.id ? 1 : 0));
+
+      const placed: Array<{ x: number; y: number }> = [];
+      const chosen = new Map<string, Candidate>();
+      for (const entry of entries) {
+        let best = entry.candidates[0]!;
+        let bestScore = -Infinity;
+        for (const c of entry.candidates) {
+          // Minimum distance from this candidate to any already-placed
+          // chip. With no prior placements the tie-breaker is the
+          // distance to the shape's own centre (centre wins ties for
+          // small shapes with only one candidate).
+          let minDist = Infinity;
+          for (const p of placed) {
+            const d = Math.hypot(c.x - p.x, c.y - p.y);
+            if (d < minDist) minDist = d;
+          }
+          if (minDist > bestScore) {
+            bestScore = minDist;
+            best = c;
+          }
+        }
+        placed.push(best);
+        chosen.set(entry.shape.id, best);
+      }
+
+      // Project each chosen page point to screen coords for rendering.
+      const next: Array<{ editId: string; shapeId: string; x: number; y: number; stacked: boolean }> = [];
+      for (const entry of entries) {
+        const pagePt = chosen.get(entry.shape.id)!;
+        const screenPt = editor.pageToScreen(pagePt);
         next.push({
-          editId,
-          shapeId: shape.id,
-          x: pt.x,
-          y: pt.y,
-          stacked: animationShapeIds.has(shape.id),
+          editId: entry.editId,
+          shapeId: entry.shape.id,
+          x: screenPt.x,
+          y: screenPt.y,
+          stacked: animationShapeIds.has(entry.shape.id),
         });
       }
       setPositions(next);
@@ -133,12 +209,14 @@ export function EditIdsOverlay({ editor, enabled, registry, animationShapeIds }:
           key={p.shapeId}
           className="pointer-events-none fixed z-[9996]"
           style={{
-            // Top-right external corner. If the shape also carries a blue
-            // animation badge (which sits at shape centre), shift the red
-            // chip down by its full height so the two stack cleanly
-            // rather than overlap at different anchors.
-            left: p.x + 4,
-            top: p.y - 10 + (p.stacked ? 22 : 0),
+            // Anchor is a point inside the shape's geometry — render the
+            // chip centred on it via translate(-50%, -50%). If the shape
+            // also carries a blue animation badge (also anchored at the
+            // shape's centre), push the red chip downward so the two
+            // read as a vertical stack instead of overlapping.
+            left: p.x,
+            top: p.y,
+            transform: `translate(-50%, calc(-50% + ${p.stacked ? 22 : 0}px))`,
           }}
         >
           <div
