@@ -44,3 +44,4 @@ coverage/
 
 # Sentry
 .sentryclirc
+.claude/scheduled_tasks.lock
