@@ -173,11 +173,12 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
           zIndex: 9994,
           width: pos.size,
           height: pos.size,
+          boxSizing: "border-box",
           borderRadius: 8,
           background: open ? "#3B82F6" : "white",
           color: open ? "white" : "#334155",
           border: "1px solid #E2E8F0",
-          boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+          boxShadow: "0 1px 2px rgba(15,23,42,0.06)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -186,7 +187,7 @@ export function DirectoorShapePicker({ editor }: DirectoorShapePickerProps) {
           padding: 0,
         }}
       >
-        <Shapes size={Math.round(pos.size * 0.45)} />
+        <Shapes size={Math.round(pos.size * 0.42)} />
       </button>
 
       {/* Popup (portal so it can layer above tldraw chrome) — anchored

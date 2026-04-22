@@ -396,30 +396,46 @@ function AnimateToggle({ collapsed = false }: { collapsed?: boolean } = {}) {
     [editor],
   );
 
-  // Anchor position + width — mirror the DefaultStylePanel so the
-  // three panels (Style / Text color / Animate) read as a single
-  // vertically-stacked column. We poll the style panel's bounding rect
-  // every 300ms (cheap) and adopt its `width` + position just below it.
+  // Anchor position + width — mirror the DefaultStylePanel (or the
+  // label-color panel if it's also showing). ResizeObserver keeps us
+  // in lock-step with whichever panel we're sitting below, so style
+  // panel resizes (different shape = different options) update the
+  // Animate pill instantly instead of lagging a poll cycle.
   const [top, setTop] = useState(360);
   const [width, setWidth] = useState<number | null>(null);
   useEffect(() => {
-    const update = () => {
+    let ros: ResizeObserver[] = [];
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    const attach = () => {
       const labelPanel = document.querySelector(".directoor-label-color-panel") as HTMLElement | null;
       const stylePanel = document.querySelector(".tlui-style-panel") as HTMLElement | null;
-      const ref = labelPanel ?? stylePanel;
-      if (ref) {
-        const r = ref.getBoundingClientRect();
-        setTop(r.bottom + 6);
-        // Prefer the DefaultStylePanel width (the canonical column
-        // width). Fall back to the label panel when the style panel
-        // isn't mounted.
-        const base = stylePanel ?? ref;
-        setWidth(base.getBoundingClientRect().width);
+      const below = labelPanel ?? stylePanel;
+      const widthRef = stylePanel ?? labelPanel;
+      if (!below || !widthRef) {
+        retry = setTimeout(attach, 150);
+        return;
       }
+      const update = () => {
+        setTop(below.getBoundingClientRect().bottom + 6);
+        setWidth(widthRef.getBoundingClientRect().width);
+      };
+      update();
+      const ro1 = new ResizeObserver(update);
+      ro1.observe(below);
+      ros.push(ro1);
+      if (below !== widthRef) {
+        const ro2 = new ResizeObserver(update);
+        ro2.observe(widthRef);
+        ros.push(ro2);
+      }
+      window.addEventListener("resize", update);
     };
-    update();
-    const id = setInterval(update, 300);
-    return () => clearInterval(id);
+    attach();
+    return () => {
+      if (retry) clearTimeout(retry);
+      ros.forEach((r) => r.disconnect());
+    };
   }, []);
 
   if (!state) return null;
@@ -453,7 +469,10 @@ function AnimateToggle({ collapsed = false }: { collapsed?: boolean } = {}) {
       style={{
         position: "fixed",
         top,
+        // Same 8px margin-right as tldraw's style panel so all three
+        // panels (Style / Text color / Animate) share a right edge.
         right: "calc(100vw - var(--ds-page-right-x, 100vw) + 16px)",
+        marginRight: 8,
         zIndex: 9993,
         background: "white",
         borderRadius: 8,
@@ -547,22 +566,39 @@ function LabelColorPicker({ collapsed = false }: { collapsed?: boolean } = {}) {
   );
 
   // Issue F: the "Text color" panel must match the DefaultStylePanel's
-  // width exactly so the two don't look mis-aligned. We poll its
-  // bounding rect and mirror top + width.
+  // width AND bottom EXACTLY, so the two read as one continuous column.
+  // We use a ResizeObserver (fires on every relayout, not polled) —
+  // tldraw's style panel grows/shrinks depending on the selected shape,
+  // so a timer-based poll lagged behind and the panel looked misaligned.
   const [top, setTop] = useState(340);
   const [width, setWidth] = useState<number | null>(null);
   useEffect(() => {
-    const update = () => {
+    let ro: ResizeObserver | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    const attach = () => {
       const panel = document.querySelector(".tlui-style-panel");
-      if (panel) {
+      if (!panel) {
+        // Panel not mounted yet — retry next frame.
+        retry = setTimeout(attach, 150);
+        return;
+      }
+      const update = () => {
         const rect = panel.getBoundingClientRect();
         setTop(rect.bottom + 6);
         setWidth(rect.width);
-      }
+      };
+      update();
+      ro = new ResizeObserver(update);
+      ro.observe(panel);
+      // Also update on scroll / viewport changes (position-derived top).
+      window.addEventListener("resize", update);
     };
-    update();
-    const id = setInterval(update, 300);
-    return () => clearInterval(id);
+    attach();
+    return () => {
+      if (retry) clearTimeout(retry);
+      if (ro) ro.disconnect();
+    };
   }, []);
 
   if (labelColor === null) return null;
@@ -587,7 +623,12 @@ function LabelColorPicker({ collapsed = false }: { collapsed?: boolean } = {}) {
       style={{
         position: "fixed",
         top,
+        // tldraw's native style panel has `margin-right: 8px`, so its
+        // visible right edge sits 8px INSIDE our --ds-page-right-x
+        // anchor. To align exactly we add `marginRight: 8px` to ourselves
+        // (same right anchor + same margin → identical right edge).
         right: `calc(100vw - var(--ds-page-right-x, 100vw) + 16px)`,
+        marginRight: 8,
         zIndex: 9993,
         background: "white",
         borderRadius: 8,

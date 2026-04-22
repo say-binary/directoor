@@ -231,6 +231,10 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
         onClick={() => setOpen((v) => !v)}
         className="directoor-media-import-button"
         title="Import text or image"
+        // box-sizing: border-box + explicit size match the tldraw tool
+        // buttons EXACTLY (same height/width, same radius). Shadow
+        // reduced to a single subtle line so the button doesn't read
+        // "puffier" than its tldraw siblings on the same strip.
         style={{
           position: "fixed",
           left: pos.left,
@@ -238,11 +242,12 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
           zIndex: 9994,
           width: pos.size,
           height: pos.size,
+          boxSizing: "border-box",
           borderRadius: 8,
           background: open ? "#3B82F6" : "white",
           color: open ? "white" : "#334155",
           border: "1px solid #E2E8F0",
-          boxShadow: "0 2px 8px rgba(15,23,42,0.08)",
+          boxShadow: "0 1px 2px rgba(15,23,42,0.06)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -251,7 +256,7 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
           padding: 0,
         }}
       >
-        <Upload size={Math.round(pos.size * 0.45)} />
+        <Upload size={Math.round(pos.size * 0.42)} />
       </button>
 
       {/* Popup — 2 large tiles side-by-side */}
