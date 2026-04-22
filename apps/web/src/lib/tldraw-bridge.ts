@@ -80,8 +80,29 @@ export function executeActions(
   store: StoreInstance,
   editor: Editor,
 ): void {
-  for (const action of actions) {
-    executeAction(action, store, editor);
+  // Wrap the entire batch in a single undo entry so Cmd-Z reverses the
+  // whole LLM response at once — matching the user's mental model that
+  // one prompt = one undoable step. editor.run() collapses the batch
+  // into a single history entry and markHistoryStoppingPoint labels it.
+  editor.markHistoryStoppingPoint(
+    actions.length === 1 ? describeAction(actions[0]) : `Apply ${actions.length} edits`,
+  );
+  editor.run(() => {
+    for (const action of actions) {
+      executeAction(action, store, editor);
+    }
+  });
+}
+
+/** Human-readable one-line summary of a single action, for the undo stack. */
+function describeAction(a: CanvasAction): string {
+  switch (a.type) {
+    case "CREATE_OBJECT": return "Create shape";
+    case "UPDATE_OBJECT": return "Update shape";
+    case "DELETE_ELEMENT": return "Delete shape";
+    case "CREATE_CONNECTION": return "Create connection";
+    case "UPDATE_CONNECTION": return "Update connection";
+    default: return "Canvas edit";
   }
 }
 

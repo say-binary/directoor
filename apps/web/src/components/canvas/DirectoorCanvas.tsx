@@ -13,7 +13,7 @@ import {
   DefaultFontStyle,
   createShapeId,
 } from "tldraw";
-import { X as CloseIcon, Sliders, Play as PlayIcon } from "lucide-react";
+import { Minus as MinimiseIcon, Sliders, Play as PlayIcon } from "lucide-react";
 
 // ─── Document page configuration ─────────────────────────────────────────────
 // Directoor canvases behave like a single Word/Notion-style page:
@@ -353,6 +353,11 @@ const LABEL_COLOR_OPTIONS: TLDefaultColorStyle[] = [
 //   - directoor-arrow / arrow / line / draw  → flowing stroke-dashoffset
 //   - directoor-gear                         → spinning around center
 // Everything else (rectangles, text, etc.) doesn't get the toggle.
+/** Shared width for the collapsed "Styles" re-open pill (top-right of
+ *  style panel column) and the collapsed "Share" pill (CanvasToolbar).
+ *  Exported so CanvasToolbar can import it and both chips align. */
+export const COLLAPSED_CHIP_WIDTH = 104;
+
 const ANIMATABLE_TYPES = new Set([
   "directoor-arrow", "arrow", "line", "draw", "directoor-gear",
 ]);
@@ -367,7 +372,7 @@ function readAnimated(shape: { meta?: Record<string, unknown>; props?: unknown }
   return typeof props.animated === "boolean" ? props.animated : false;
 }
 
-function AnimateToggle() {
+function AnimateToggle({ collapsed = false }: { collapsed?: boolean } = {}) {
   const editor = useEditor();
 
   const state = useValue<{ on: boolean; mixed: boolean } | null>(
@@ -391,16 +396,26 @@ function AnimateToggle() {
     [editor],
   );
 
-  // Anchor position — same column as the tldraw style panel, just
-  // below the text-color picker when it's visible, otherwise below
-  // the style panel itself.
+  // Anchor position + width — mirror the DefaultStylePanel so the
+  // three panels (Style / Text color / Animate) read as a single
+  // vertically-stacked column. We poll the style panel's bounding rect
+  // every 300ms (cheap) and adopt its `width` + position just below it.
   const [top, setTop] = useState(360);
+  const [width, setWidth] = useState<number | null>(null);
   useEffect(() => {
     const update = () => {
       const labelPanel = document.querySelector(".directoor-label-color-panel") as HTMLElement | null;
       const stylePanel = document.querySelector(".tlui-style-panel") as HTMLElement | null;
       const ref = labelPanel ?? stylePanel;
-      if (ref) setTop(ref.getBoundingClientRect().bottom + 6);
+      if (ref) {
+        const r = ref.getBoundingClientRect();
+        setTop(r.bottom + 6);
+        // Prefer the DefaultStylePanel width (the canonical column
+        // width). Fall back to the label panel when the style panel
+        // isn't mounted.
+        const base = stylePanel ?? ref;
+        setWidth(base.getBoundingClientRect().width);
+      }
     };
     update();
     const id = setInterval(update, 300);
@@ -408,10 +423,14 @@ function AnimateToggle() {
   }, []);
 
   if (!state) return null;
+  if (collapsed) return null;
 
   const toggle = () => {
     const next = state.mixed ? true : !state.on;
     const ids = editor.getSelectedShapeIds();
+    // Undo marker — user can Cmd-Z to reverse the toggle as a single
+    // step regardless of how many shapes are selected.
+    editor.markHistoryStoppingPoint(`Toggle animation ${next ? "on" : "off"}`);
     editor.run(() => {
       for (const id of ids) {
         const shape = editor.getShape(id);
@@ -438,12 +457,15 @@ function AnimateToggle() {
         zIndex: 9993,
         background: "white",
         borderRadius: 8,
-        boxShadow: "0 2px 12px rgba(15,23,42,0.12)",
+        // Match the tldraw DefaultStylePanel shadow so all three panels
+        // look like one cohesive column.
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 10px rgba(0,0,0,0.08)",
+        border: "1px solid #E2E8F0",
         padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        width: 156,
+        width: width ?? 156,
         pointerEvents: "all",
       }}
     >
@@ -502,7 +524,7 @@ function AnimateToggle() {
   );
 }
 
-function LabelColorPicker() {
+function LabelColorPicker({ collapsed = false }: { collapsed?: boolean } = {}) {
   const editor = useEditor();
 
   // Issue G: only show the text-color picker when the user is ACTIVELY
@@ -544,6 +566,7 @@ function LabelColorPicker() {
   }, []);
 
   if (labelColor === null) return null;
+  if (collapsed) return null;
 
   const setColor = (c: TLDefaultColorStyle) => {
     // The picker is only shown during text edit mode, so we update the
@@ -553,6 +576,8 @@ function LabelColorPicker() {
     const shape = editor.getShape(editingId);
     const props = shape?.props as { labelColor?: TLDefaultColorStyle } | undefined;
     if (!props || props.labelColor === undefined) return;
+    // Undo marker — a text-color change is a single Cmd-Z step.
+    editor.markHistoryStoppingPoint(`Change text color to ${c}`);
     editor.updateShape({ id: editingId, type: shape!.type, props: { ...props, labelColor: c } });
   };
 
@@ -566,7 +591,9 @@ function LabelColorPicker() {
         zIndex: 9993,
         background: "white",
         borderRadius: 8,
-        boxShadow: "0 2px 12px rgba(15,23,42,0.12)",
+        // Match DefaultStylePanel shadow + border for a cohesive column.
+        boxShadow: "0 1px 3px rgba(0,0,0,0.06), 0 4px 10px rgba(0,0,0,0.08)",
+        border: "1px solid #E2E8F0",
         padding: "8px 10px",
         display: "flex",
         flexDirection: "column",
@@ -685,39 +712,45 @@ function ConditionalStylePanel() {
             padding: 0,
           }}
         >
-          <CloseIcon size={12} color="#64748B" />
+          <MinimiseIcon size={12} color="#64748B" strokeWidth={2.5} />
         </button>
       )}
       {collapsed && (
         <button
           onClick={() => setCollapsed(false)}
           title="Show styles"
+          // Width kept in sync with the collapsed Share button
+          // (CanvasToolbar) via a shared constant so both chips read as
+          // equal-sized siblings anchored to the page's right edge.
           style={{
             position: "fixed",
             top: 72,
             right: "calc(100vw - var(--ds-page-right-x, 100vw) + 16px)",
             zIndex: 9994,
-            padding: "6px 10px",
-            borderRadius: 8,
+            width: COLLAPSED_CHIP_WIDTH,
+            height: 32,
+            padding: "0 12px",
+            borderRadius: 12,
             background: "white",
             border: "1px solid #E2E8F0",
-            boxShadow: "0 2px 4px rgba(15,23,42,0.08)",
+            boxShadow: "0 10px 15px -3px rgba(0,0,0,0.08), 0 0 0 1px rgba(15,23,42,0.05)",
             display: "flex",
             alignItems: "center",
-            gap: 5,
-            fontSize: 11,
+            justifyContent: "center",
+            gap: 6,
+            fontSize: 12,
             fontWeight: 500,
             color: "#475569",
             cursor: "pointer",
             pointerEvents: "all",
           }}
         >
-          <Sliders size={12} />
+          <Sliders size={13} />
           Styles
         </button>
       )}
-      <LabelColorPicker />
-      <AnimateToggle />
+      <LabelColorPicker collapsed={collapsed} />
+      <AnimateToggle collapsed={collapsed} />
     </>
   );
 }
@@ -839,6 +872,7 @@ import { CanvasToolbar } from "./CanvasToolbar";
 import { ShareDialog } from "./ShareDialog";
 import { AnimationExportDialog } from "./AnimationExportDialog";
 import { DirectoorShapePicker } from "./DirectoorShapePicker";
+import { DirectoorMediaImport } from "./DirectoorMediaImport";
 
 /**
  * DirectoorCanvas — The main canvas component
@@ -1753,6 +1787,11 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           ARCHETYPES (extensible); single-click on canvas drops the
           selected shape at that point with its default size. */}
       <DirectoorShapePicker editor={editor} />
+
+      {/* Media import (Text + Image) — sits to the right of the Shape
+          picker on the same bottom-toolbar baseline. Replaces tldraw's
+          native asset/upload button (which is hidden via globals.css). */}
+      <DirectoorMediaImport editor={editor} />
 
       {/* Top-right floating toolbar — export + share */}
       <CanvasToolbar

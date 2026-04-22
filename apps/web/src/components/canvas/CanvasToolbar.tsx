@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { Editor } from "tldraw";
 import { exportAsPng, exportAsSvg, copyCanvasToClipboard } from "@/lib/export";
+import { COLLAPSED_CHIP_WIDTH } from "./DirectoorCanvas";
 
 interface CanvasToolbarProps {
   editor: Editor | null;
@@ -107,17 +108,20 @@ export function CanvasToolbar({
   // full toolbar. Keeps the canvas chrome out of the user's way until
   // they actually need to download or share.
   if (collapsed) {
+    // Width matches the collapsed "Styles" pill in DirectoorCanvas
+    // (COLLAPSED_CHIP_WIDTH) so the two chips in the right-column look
+    // like equal-width siblings.
     return (
       <div
-        style={floatingStyle}
+        style={{ ...floatingStyle, width: COLLAPSED_CHIP_WIDTH }}
         className="rounded-xl border border-slate-200 bg-white/95 shadow-lg ring-1 ring-slate-900/5 backdrop-blur-sm"
       >
         <button
           onClick={() => setCollapsed(false)}
           title="Download / Copy / Share"
-          className="flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          className="flex h-8 w-full items-center justify-center gap-1.5 rounded-xl text-xs font-medium text-slate-700 hover:bg-slate-50"
         >
-          <Share2 size={14} />
+          <Share2 size={13} />
           <span>Share</span>
           <ChevronLeft size={12} className="text-slate-400" />
         </button>

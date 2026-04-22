@@ -64,6 +64,16 @@ body,
   z-index: 9993;
 }
 
+/* Hide tldraw's native "asset" (image upload) tool button in the
+   bottom toolbar — Directoor's own DirectoorMediaImport button provides
+   the single unified entry point for both text + image import. Matches
+   by data-testid (tldraw standard) AND by tool id, so future tldraw
+   versions that change one or the other still hide it. */
+.tlui-toolbar [data-testid="tools.asset"],
+.tlui-toolbar button[data-value="asset"] {
+  display: none !important;
+}
+
 /* tldraw wraps the custom Background component in `.tl-background__wrapper`
    which (unlike our inner div) has pointer-events: auto and zIndex: 100 —
    it intercepts every click before it reaches the shapes underneath. Force
