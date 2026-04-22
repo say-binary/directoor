@@ -82,6 +82,9 @@ body[data-directoor-style-collapsed="true"] .tlui-rich-text__toolbar {
    orientation. */
 .tl-watermark_SEE-LICENSE {
   position: relative;
+  /* Widen + lengthen so the bigger Directoor wordmark reads clearly. */
+  min-width: 20px !important;
+  min-height: 80px !important;
 }
 .tl-watermark_SEE-LICENSE > button {
   visibility: hidden;
@@ -93,11 +96,11 @@ body[data-directoor-style-collapsed="true"] .tlui-rich-text__toolbar {
   left: 50%;
   transform: translate(-50%, -50%) rotate(-90deg);
   white-space: nowrap;
-  font-size: 8px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #64748B;
+  color: #475569;
   pointer-events: none;
 }
 
