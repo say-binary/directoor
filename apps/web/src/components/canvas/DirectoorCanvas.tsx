@@ -1203,28 +1203,82 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // undo their actual change). Wrap the updateShape in
     // editor.history.ignore so the correction doesn't pollute the
     // undo stream — Cmd-Z goes straight to the user's previous action.
+    // Bounds-based correction used by both the afterCreate (notes / shapes
+    // that finalize on pointer-up with no mid-drag updates) and afterChange
+    // (draw / line / etc.) handlers. Translates the shape so its page
+    // bounds fit inside [0, pageWidth] × [0, ∞) without distorting interior
+    // geometry (points/handles) the way props-level clamping would.
+    const correctOffPageBounds = (shape: TLShape) => {
+      const pw = pageWidthRef.current;
+      const bounds = editor.getShapePageBounds(shape.id);
+      if (!bounds) return;
+      let dx = 0;
+      let dy = 0;
+      if (bounds.maxX > pw) dx = pw - bounds.maxX;
+      if (bounds.minX + dx < 0) dx = -bounds.minX;
+      if (bounds.minY < 0) dy = -bounds.minY;
+      if (dx === 0 && dy === 0) return;
+      queueMicrotask(() => {
+        try {
+          editor.run(
+            () => {
+              editor.updateShape({ id: shape.id, type: shape.type, x: shape.x + dx, y: shape.y + dy });
+            },
+            { history: "ignore" },
+          );
+        } catch { /* shape may have been deleted */ }
+      });
+    };
+
+    // afterCreate — fires once when a shape enters the store. For notes
+    // (and any shape that gets created in its final form without mid-drag
+    // updates) this is the only place we can catch an off-page result.
+    const u3a = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
+      try {
+        if (isLoadingSnapshotRef.current) return;
+        correctOffPageBounds(shape);
+      } catch (err) {
+        console.warn("[Directoor] afterCreate handler error", err);
+      }
+    });
+
     const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
       try {
         if (isLoadingSnapshotRef.current) return;
-        if (ARROW_TYPES.has(next.type)) return;
-        if (next.type === "line") return;
-        const corrected = clampShape(next);
-        if (corrected !== next) {
-          // Use a microtask so we don't recurse inside the side-effect.
-          queueMicrotask(() => {
-            try {
-              // `{ history: "ignore" }` keeps the clamp correction OUT
-              // of the undo stack so Cmd-Z rewinds straight to the
-              // user's prior action, not through our automatic fix-up.
-              editor.run(
-                () => {
-                  editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
-                },
-                { history: "ignore" },
-              );
-            } catch { /* shape may have been deleted */ }
-          });
+        // Two corrections in sequence:
+        //
+        // (1) Simple x/y + w clamp for shapes whose geometry is anchor-
+        // derived (directoor-arrow, geo, text, note, highlight). This is
+        // the existing behaviour.
+        //
+        // (2) Bounds-based clamp for native tldraw shapes whose geometry
+        // lives in prop points (draw / line / arrow / note) — tldraw's
+        // own getShapePageBounds() accounts for the shape's interior
+        // points so translating by the overshoot pulls the whole stroke
+        // back inside the page. We only run this once the user releases
+        // the pointer — otherwise the shape would snap back mid-drag
+        // and feel laggy.
+        if (!ARROW_TYPES.has(next.type) && next.type !== "line") {
+          const corrected = clampShape(next);
+          if (corrected !== next) {
+            queueMicrotask(() => {
+              try {
+                editor.run(
+                  () => {
+                    editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
+                  },
+                  { history: "ignore" },
+                );
+              } catch { /* shape may have been deleted */ }
+            });
+          }
         }
+        // Post-drag bounds correction: skip while the user is still
+        // actively drawing. Runs for all shape types (including draw/
+        // line/native-arrow/note) because they can extend past the page
+        // via their interior points, which the simple x/y clamp misses.
+        if (editor.inputs.isPointing) return;
+        correctOffPageBounds(next);
       } catch (err) {
         console.warn("[Directoor] afterChange handler error", err);
       }
@@ -1239,7 +1293,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // + an injected <style> block (see AnimatedShapesStyle below), which
     // works uniformly on native arrow, native line, and directoor shapes.
 
-    return () => { u1(); u2(); u3(); };
+    return () => { u1(); u2(); u3(); u3a(); };
   }, [editor]);
 
   // ─── React to page-width changes (from drag handle or load) ─────────
