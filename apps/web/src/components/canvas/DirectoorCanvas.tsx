@@ -923,7 +923,8 @@ import { createCanvasStore } from "@directoor/core";
 import { CommandBar } from "../command-bar/CommandBar";
 import { InlineCommand } from "../command-bar/InlineCommand";
 import { AnimationRegion, type AnimationRegionData } from "../animation/AnimationRegion";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Hash } from "lucide-react";
+import { EditIdsOverlay, createEditIdRegistry, ensureEditIds, resolveEditId } from "./EditIdsOverlay";
 import { supabase } from "@/lib/supabase";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShareDialog } from "./ShareDialog";
@@ -976,6 +977,14 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
   // Selection state for showing "Animate this" button
   const [selectedShapeIds, setSelectedShapeIds] = useState<TLShapeId[]>([]);
   const [selectionToolbarPos, setSelectionToolbarPos] = useState({ x: 0, y: 0 });
+
+  // Edit-by-ID mode: when on, every shape renders a small red chip with a
+  // type-prefixed identifier (S-3, T-12, A-1, ...) so the user can tell
+  // the command bar to edit a specific shape by id. The registry is kept
+  // for the entire session — deleted shapes' ids never get reused; new
+  // shapes always get a fresh incremented number.
+  const [editIdsMode, setEditIdsMode] = useState(false);
+  const editIdsRegistryRef = useRef(createEditIdRegistry());
 
   // Double-click detection
   const lastClickRef = useRef<{ time: number; x: number; y: number } | null>(null);
@@ -1233,8 +1242,12 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // afterCreate — fires once when a shape enters the store. For notes
     // (and any shape that gets created in its final form without mid-drag
     // updates) this is the only place we can catch an off-page result.
+    // Also the hook that mints a fresh edit-id for the new shape so
+    // anything the user has drawn/pasted during the session is addressable
+    // the moment they flip the edit-ids toggle on.
     const u3a = editor.sideEffects.registerAfterCreateHandler("shape", (shape) => {
       try {
+        ensureEditIds(editIdsRegistryRef.current, [shape]);
         if (isLoadingSnapshotRef.current) return;
         correctOffPageBounds(shape);
       } catch (err) {
@@ -1959,6 +1972,66 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         onExportAnimation={() => setExportAnimationOpen(true)}
       />
 
+      {/* Edit-ids toggle — top-center of the canvas. When on, overlays a
+          small red chip on every shape with its session-stable identifier
+          (T-3, S-12, A-1, ...). Users then address a specific shape from
+          the command bar: "edit S-12 make it dotted". Badges stay
+          distinct from animation badges (blue, centred) because the red
+          chips anchor at the shape's top-right corner. */}
+      <button
+        onClick={() => {
+          if (!editor) return;
+          if (!editIdsMode) {
+            // Backfill any pre-existing shapes (e.g. loaded from snapshot)
+            // so toggling on immediately shows every shape.
+            ensureEditIds(editIdsRegistryRef.current, editor.getCurrentPageShapes());
+          }
+          setEditIdsMode((v) => !v);
+        }}
+        title={editIdsMode ? "Hide shape IDs" : "Show shape IDs (for edit-by-id commands)"}
+        style={{
+          position: "fixed",
+          top: 16,
+          left: `calc(var(--ds-sidebar-w, 0px) + (100vw - var(--ds-sidebar-w, 0px)) / 2)`,
+          transform: "translateX(-50%)",
+          zIndex: 9995,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "4px 10px",
+          height: 26,
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: "0.02em",
+          background: editIdsMode ? "#EF4444" : "white",
+          color: editIdsMode ? "white" : "#475569",
+          border: editIdsMode ? "1px solid #B91C1C" : "1px solid #E2E8F0",
+          boxShadow: "0 2px 4px rgba(15,23,42,0.08)",
+          cursor: "pointer",
+          pointerEvents: "all",
+        }}
+      >
+        <Hash size={12} strokeWidth={2.5} />
+        {editIdsMode ? "IDs on" : "Show IDs"}
+      </button>
+
+      {/* Shape-id chips overlay (rendered only when editIdsMode is on) */}
+      {editor && (
+        <EditIdsOverlay
+          editor={editor}
+          enabled={editIdsMode}
+          registry={editIdsRegistryRef.current}
+          animationShapeIds={
+            new Set(
+              animationRegions
+                .filter((r) => r.sequence.length > 0)
+                .flatMap((r) => r.shapeIds as string[]),
+            )
+          }
+        />
+      )}
+
       {/* "Animate" button when shapes are selected (only if not already in a region) */}
       {selectedShapeIds.length >= 1 && editor && (
         <div
@@ -2011,6 +2084,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         canvasId={canvasId ?? null}
         onAnimateCommand={handleAnimateCommand}
         animateHint={hasEditingRegion ? "Type: animate 1,2,3,4" : undefined}
+        onResolveEditId={(id) => resolveEditId(editIdsRegistryRef.current, id)}
       />
 
       {/* Share dialog */}

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import { Command, Send, Loader2 } from "lucide-react";
-import type { Editor } from "tldraw";
+import type { Editor, TLShapeId } from "tldraw";
 import { executeActions } from "@/lib/tldraw-bridge";
 import { apiFetch } from "@/lib/api-client";
 import { FeedbackBar } from "./FeedbackBar";
@@ -13,6 +13,11 @@ interface CommandBarProps {
   canvasId: string | null;
   onAnimateCommand?: (sequence: number[]) => void;
   animateHint?: string;
+  /** Resolve a session-scoped edit-id ("S-12", "T-3") to a tldraw shape id.
+   *  When set, the command bar understands commands of the form
+   *  `edit <ID> <rest>` — it selects the referenced shape, then runs the
+   *  rest of the command through the normal deterministic + LLM pipeline. */
+  onResolveEditId?: (editId: string) => TLShapeId | null;
 }
 
 /**
@@ -214,7 +219,7 @@ function tryDeterministicRoute(
   return { handled: false, message: "" };
 }
 
-export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateHint }: CommandBarProps) {
+export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateHint, onResolveEditId }: CommandBarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -250,8 +255,29 @@ export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateH
     setHistory((prev) => [...prev, trimmed]);
     setHistoryIndex(-1);
 
+    // ─── Edit-by-ID preprocessing ─────────────────────────────────
+    // If the command starts with `edit <PREFIX>-<NUM> <rest>`, resolve the
+    // referenced shape, select it, and strip the prefix so the rest of
+    // the pipeline runs as if the user had typed the instruction alone
+    // with the shape already selected. This lets voice/text users edit
+    // a specific asset without having to click it first.
+    let effectiveCommand = trimmed;
+    const editByIdMatch = trimmed.match(/^edit\s+([a-zA-Z]+-\d+)\s+(.+)$/);
+    if (editByIdMatch && onResolveEditId) {
+      const editId = editByIdMatch[1]!.toUpperCase();
+      const instruction = editByIdMatch[2]!.trim();
+      const shapeId = onResolveEditId(editId);
+      if (!shapeId) {
+        setLastMessage(`${editId} not found. Toggle "Show IDs" to see valid ids.`);
+        setInput("");
+        return;
+      }
+      editor.select(shapeId);
+      effectiveCommand = instruction;
+    }
+
     // Try deterministic route first (Tier 1 — free, instant)
-    const deterministicResult = tryDeterministicRoute(trimmed, editor, {
+    const deterministicResult = tryDeterministicRoute(effectiveCommand, editor, {
       onAnimate: (seq) => onAnimateCommand?.(seq),
       onUndo: () => {
         editor.undo();
@@ -279,7 +305,7 @@ export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateH
         canvasId,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          command: trimmed,
+          command: effectiveCommand,
           context: store.getState().getContextSnapshot(),
         }),
       });
@@ -324,7 +350,7 @@ export function CommandBar({ editor, store, canvasId, onAnimateCommand, animateH
     } finally {
       setIsProcessing(false);
     }
-  }, [input, isProcessing, store, editor, onAnimateCommand]);
+  }, [input, isProcessing, store, editor, canvasId, onAnimateCommand, onResolveEditId]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
