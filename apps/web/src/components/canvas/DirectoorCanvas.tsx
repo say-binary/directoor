@@ -1846,11 +1846,41 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
       }
     }
 
+    // Auto-infer the default sequence from the selection's spatial layout:
+    // left-to-right for wider-than-tall arrangements, top-to-bottom
+    // otherwise. This removes the "type animate 1,2,3..." step for the
+    // common case of large diagrams. Sort `shapeIds` by page-bounds center
+    // along the dominant axis, then set sequence = [1..n] — identity
+    // against the already-sorted list. User can re-enter edit mode to
+    // re-order at any time.
+    const ids = [...allShapeIds];
+    const centers = new Map<TLShapeId, { cx: number; cy: number }>();
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const id of ids) {
+      const b = editor.getShapePageBounds(id);
+      if (!b) continue;
+      centers.set(id, { cx: b.x + b.w / 2, cy: b.y + b.h / 2 });
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
+      maxX = Math.max(maxX, b.x + b.w);
+      maxY = Math.max(maxY, b.y + b.h);
+    }
+    const isHorizontal = (maxX - minX) >= (maxY - minY);
+    ids.sort((a, b) => {
+      const ca = centers.get(a);
+      const cb = centers.get(b);
+      if (!ca || !cb) return 0;
+      return isHorizontal ? (ca.cx - cb.cx) || (ca.cy - cb.cy) : (ca.cy - cb.cy) || (ca.cx - cb.cx);
+    });
+
     const newRegion: AnimationRegionData = {
       id: crypto.randomUUID().slice(0, 8),
-      shapeIds: [...allShapeIds],
-      sequence: [],
-      isEditMode: true, // Start in edit mode to show numbers
+      shapeIds: ids,
+      sequence: ids.map((_, i) => i + 1),
+      isEditMode: false, // Sequence is ready — user re-enters edit mode to re-order
       isLooping: false,
     };
 
