@@ -28,6 +28,9 @@ body,
   position: relative;
   width: 100%;
   height: 100%;
+  /* Paint the "desk" grey behind the inset so the left + top gaps read
+     as a continuous frame around the canvas. */
+  background: #E2E8F0;
 }
 
 /* Inset the tldraw editor on the LEFT (after the sidebar) and TOP so the
