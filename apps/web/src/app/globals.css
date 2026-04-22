@@ -64,6 +64,39 @@ body,
   z-index: 9993;
 }
 
+/* Rich-text editing contextual toolbar — when the user enters edit
+   mode on a shape with text (e.g. double-click a rectangle to add a
+   label), tldraw floats a mini formatting toolbar near the text.
+   We re-anchor it into the right-hand "style column" so it lines up
+   with the DefaultStylePanel: same top-right position, same width, same
+   shadow. That makes the three possible right-rail panels (Style,
+   Text-color, Rich-text formatting) read as one cohesive column.
+
+   When the user collapses the style panel via the minimise button,
+   we toggle `data-directoor-style-collapsed="true"` on <body> (set by
+   ConditionalStylePanel). That CSS attribute hides this toolbar too —
+   "minimise on cross for default style property" per UX spec. */
+.tlui-rich-text__toolbar {
+  position: fixed !important;
+  top: 120px !important;
+  right: calc(100vw - var(--ds-page-right-x, 100vw) + 16px) !important;
+  left: auto !important;
+  transform: none !important;
+  width: 148px !important;
+  max-width: 148px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.04), 0 2px 3px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.10), inset 0 0 0 1px #fff !important;
+  border-radius: 9px !important;
+  background: #fcfcfc !important;
+  padding: 4px !important;
+  z-index: 9993 !important;
+}
+
+body[data-directoor-style-collapsed="true"] .tlui-rich-text__toolbar {
+  display: none !important;
+}
+
 /* Hide tldraw's native "asset" (image upload) tool button in the
    bottom toolbar — Directoor's own DirectoorMediaImport button provides
    the single unified entry point for both text + image import. Matches

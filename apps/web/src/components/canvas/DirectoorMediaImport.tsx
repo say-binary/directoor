@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Upload, Type, ImageIcon, X as CloseIcon } from "lucide-react";
+import { Upload, Type, ImageIcon } from "lucide-react";
 import type { Editor } from "tldraw";
 import { createShapeId } from "tldraw";
 
@@ -11,9 +11,9 @@ import { createShapeId } from "tldraw";
  * DirectoorShapePicker (on the same baseline as tldraw's bottom toolbar
  * buttons). Opens a compact popup with two entries:
  *
- *   • Text   — arms a "click-to-drop" mode; the next click on the canvas
- *              creates a directoor-text shape at that point and
- *              immediately enters edit mode so the user can start typing.
+ *   • Text   — opens a file picker for .txt/.md/.csv/.json/.log/.ts/.js
+ *              files; reads the selected file's contents into a new
+ *              directoor-text shape at the viewport centre.
  *   • Image  — opens a native file picker; reads the chosen file as a
  *              data-URL and creates a directoor-image shape at the
  *              centre of the current viewport.
@@ -30,12 +30,10 @@ interface DirectoorMediaImportProps {
   editor: Editor | null;
 }
 
-type ArmedKind = "text" | null;
-
 export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
   const [open, setOpen] = useState(false);
-  const [armed, setArmed] = useState<ArmedKind>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+  const textInputRef = useRef<HTMLInputElement | null>(null);
   const anchorRef = useRef<HTMLButtonElement | null>(null);
 
   // ─── Position against tldraw's bottom toolbar ───────────────────────
@@ -69,77 +67,6 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
     };
   }, []);
 
-  // ─── Armed "text" mode: next canvas click creates a text shape ─────
-  useEffect(() => {
-    if (armed !== "text" || !editor) return;
-
-    const container = document.querySelector(".tldraw-container");
-    if (!container) return;
-
-    const handlePointerDown = (e: Event) => {
-      const pe = e as PointerEvent;
-      if (pe.button !== 0) return;
-      const target = pe.target as HTMLElement;
-      if (!target.closest(".tl-canvas")) return;
-      if (target.closest(".directoor-media-import-popup")) return;
-      if (target.closest(".directoor-media-import-armed-pill")) return;
-
-      pe.preventDefault();
-      pe.stopPropagation();
-
-      const pagePoint = editor.screenToPage({ x: pe.clientX, y: pe.clientY });
-      const W = 400;
-      const H = 120;
-      const id = createShapeId();
-      editor.markHistoryStoppingPoint("Add text");
-      editor.createShape({
-        id,
-        type: "directoor-text",
-        x: pagePoint.x - W / 2,
-        y: pagePoint.y - H / 2,
-        props: {
-          w: W,
-          h: H,
-          text: "",
-          color: "#0F172A",
-          size: "m",
-          weight: "normal",
-          align: "left",
-          background: "none",
-          contentType: "prose",
-        },
-      });
-      // Jump straight into edit mode so the user can start typing.
-      setTimeout(() => {
-        editor.select(id);
-        editor.setEditingShape(id);
-      }, 50);
-      setArmed(null);
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setArmed(null);
-      }
-    };
-
-    container.addEventListener("pointerdown", handlePointerDown, true);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      container.removeEventListener("pointerdown", handlePointerDown, true);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [armed, editor]);
-
-  // Body cursor while armed, so the user sees they're in "place mode".
-  useEffect(() => {
-    if (!armed) return;
-    const prev = document.body.style.cursor;
-    document.body.style.cursor = "crosshair";
-    return () => { document.body.style.cursor = prev; };
-  }, [armed]);
-
   // Close popup on outside click
   useEffect(() => {
     if (!open) return;
@@ -156,10 +83,10 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
   // ─── Image upload ──────────────────────────────────────────────────
   const openImagePicker = useCallback(() => {
     setOpen(false);
-    fileInputRef.current?.click();
+    imageInputRef.current?.click();
   }, []);
 
-  const handleFileChange = useCallback(
+  const handleImageChange = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       e.target.value = ""; // reset so the same file can be re-selected
@@ -218,23 +145,83 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
     [editor],
   );
 
-  const armText = useCallback(() => {
+  // ─── Text file import ──────────────────────────────────────────────
+  const openTextPicker = useCallback(() => {
     setOpen(false);
-    setArmed("text");
+    textInputRef.current?.click();
   }, []);
 
-  const disarm = useCallback(() => setArmed(null), []);
+  const handleTextChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file || !editor) return;
+
+      // Accept text-ish files up to ~1 MB. Bigger than that likely
+      // isn't useful to paste into a canvas text shape.
+      const MAX_BYTES = 1_000_000;
+      if (file.size > MAX_BYTES) {
+        alert(`File is too large (${Math.round(file.size / 1024)} KB). Max 1000 KB.`);
+        return;
+      }
+
+      const text = await file.text();
+
+      // Size the text shape based on rough content length so short
+      // snippets don't get a huge empty box and long docs scroll.
+      const lineCount = text.split("\n").length;
+      const maxLineLen = text.split("\n").reduce((m, l) => Math.max(m, l.length), 0);
+      const W = Math.min(720, Math.max(300, maxLineLen * 8));
+      const H = Math.min(600, Math.max(120, lineCount * 22));
+
+      // Place at the centre of the current viewport.
+      const vp = editor.getViewportPageBounds();
+      const x = vp.x + vp.w / 2 - W / 2;
+      const y = vp.y + vp.h / 2 - H / 2;
+
+      const id = createShapeId();
+      editor.markHistoryStoppingPoint(`Import text · ${file.name}`);
+      editor.createShape({
+        id,
+        type: "directoor-text",
+        x, y,
+        props: {
+          w: W,
+          h: H,
+          text,
+          color: "#0F172A",
+          size: "m",
+          weight: "normal",
+          align: "left",
+          background: "none",
+          contentType: "prose",
+        },
+      });
+      editor.select(id);
+    },
+    [editor],
+  );
 
   if (!pos) return null;
 
   return (
     <>
-      {/* Hidden file input for image uploads */}
+      {/* Hidden file inputs — one for images, one for text files */}
       <input
-        ref={fileInputRef}
+        ref={imageInputRef}
         type="file"
         accept="image/*"
-        onChange={handleFileChange}
+        onChange={handleImageChange}
+        style={{ display: "none" }}
+      />
+      <input
+        ref={textInputRef}
+        type="file"
+        // Broad text-ish MIME + common extensions. `text/*` covers
+        // .txt/.md/.csv/.log/.html/.xml; the explicit list after it
+        // picks up source files that some OSes don't label as text.
+        accept="text/*,.md,.markdown,.csv,.json,.log,.ts,.tsx,.js,.jsx,.py,.go,.rs,.java,.rb,.sh,.yml,.yaml,.toml,.ini,.html,.xml,.sql"
+        onChange={handleTextChange}
         style={{ display: "none" }}
       />
 
@@ -289,7 +276,7 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
           >
             <MediaTile
               label="Text"
-              onClick={armText}
+              onClick={openTextPicker}
               icon={<Type size={22} strokeWidth={2} />}
             />
             <MediaTile
@@ -301,53 +288,6 @@ export function DirectoorMediaImport({ editor }: DirectoorMediaImportProps) {
           document.body,
         )}
 
-      {/* Armed pill (Text mode only — Image triggers immediately) */}
-      {armed === "text" &&
-        createPortal(
-          <div
-            className="directoor-media-import-armed-pill"
-            style={{
-              position: "fixed",
-              top: 16,
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 9996,
-              background: "#1e293b",
-              color: "white",
-              borderRadius: 999,
-              padding: "6px 10px 6px 12px",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 12,
-              fontWeight: 500,
-              boxShadow: "0 4px 16px rgba(15,23,42,0.25)",
-              pointerEvents: "all",
-            }}
-          >
-            <span>Click canvas to place <b>Text</b></span>
-            <button
-              onClick={disarm}
-              title="Cancel (Esc)"
-              style={{
-                width: 20,
-                height: 20,
-                borderRadius: "50%",
-                background: "rgba(255,255,255,0.15)",
-                color: "white",
-                border: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                cursor: "pointer",
-                padding: 0,
-              }}
-            >
-              <CloseIcon size={11} />
-            </button>
-          </div>,
-          document.body,
-        )}
     </>
   );
 }

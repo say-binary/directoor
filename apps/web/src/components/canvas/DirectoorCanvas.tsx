@@ -682,6 +682,18 @@ function ConditionalStylePanel() {
   useEffect(() => {
     setCollapsed(false);
   }, [selectionIds]);
+  // Publish the collapsed state as a body attribute so CSS can target
+  // (used to hide the rich-text contextual toolbar while collapsed).
+  useEffect(() => {
+    if (collapsed) {
+      document.body.setAttribute("data-directoor-style-collapsed", "true");
+    } else {
+      document.body.removeAttribute("data-directoor-style-collapsed");
+    }
+    return () => {
+      document.body.removeAttribute("data-directoor-style-collapsed");
+    };
+  }, [collapsed]);
 
   if (!hasSelection) return null;
 
@@ -1139,6 +1151,13 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
     // endpoint-derived, not x/y-derived), and skip line shapes (they
     // store geometry in `props.points`, not shape.x/y, so clamping the
     // anchor in mid-draw can get tldraw's line tool stuck).
+    //
+    // IMPORTANT for UNDO: this correction runs OUTSIDE the user's
+    // action, so if we let tldraw record it in the undo stack the user
+    // has to press Cmd-Z twice (once to undo our correction, once to
+    // undo their actual change). Wrap the updateShape in
+    // editor.history.ignore so the correction doesn't pollute the
+    // undo stream — Cmd-Z goes straight to the user's previous action.
     const u3 = editor.sideEffects.registerAfterChangeHandler("shape", (_prev, next) => {
       try {
         if (isLoadingSnapshotRef.current) return;
@@ -1149,7 +1168,15 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           // Use a microtask so we don't recurse inside the side-effect.
           queueMicrotask(() => {
             try {
-              editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
+              // `{ history: "ignore" }` keeps the clamp correction OUT
+              // of the undo stack so Cmd-Z rewinds straight to the
+              // user's prior action, not through our automatic fix-up.
+              editor.run(
+                () => {
+                  editor.updateShape({ id: next.id, type: next.type, x: corrected.x, y: corrected.y });
+                },
+                { history: "ignore" },
+              );
             } catch { /* shape may have been deleted */ }
           });
         }
