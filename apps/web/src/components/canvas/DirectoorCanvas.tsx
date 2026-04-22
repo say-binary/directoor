@@ -599,7 +599,11 @@ function LabelColorPicker({ collapsed = false }: { collapsed?: boolean } = {}) {
       if (retry) clearTimeout(retry);
       if (ro) ro.disconnect();
     };
-  }, []);
+    // Re-attach when the style panel is collapsed/expanded: the
+    // DefaultStylePanel unmounts on collapse, so the old observer is
+    // bound to a dead node and our cached top/width go stale. Depending
+    // on `collapsed` tears down + re-queries the live panel on expand.
+  }, [collapsed]);
 
   if (labelColor === null) return null;
   if (collapsed) return null;
