@@ -356,6 +356,7 @@ function executeAction(
             w: textW,
             h: textH,
             text: conn.label,
+            richText: toRichText(conn.label),
             color: "#0F172A",
             size: "m",
             weight: "normal",

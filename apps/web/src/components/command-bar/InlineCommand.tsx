@@ -137,11 +137,20 @@ export function InlineCommand({
         return;
       }
       if (result.logId) setLastLogId(result.logId);
-      // Create a prose-mode DirectoorText at the click position
+      // Create a prose-mode DirectoorText at the click position. Each
+      // newline in the generated text becomes its own paragraph so the
+      // rich-text pipeline renders line breaks, and so the downstream
+      // layout engine can lay each paragraph out independently. We
+      // populate both `text` (plaintext, kept for legacy + exports) and
+      // `richText` (authoritative content).
       const w = result.suggestedWidth ?? 440;
       const h = result.suggestedHeight ?? 120;
       const tldraw = await import("tldraw");
       const tlId = tldraw.createShapeId();
+      const paragraphs = result.text.split(/\r?\n/).map((line) => ({
+        type: "paragraph",
+        ...(line.length > 0 ? { content: [{ type: "text", text: line }] } : {}),
+      }));
       editor.createShape({
         id: tlId,
         type: "directoor-text",
@@ -150,6 +159,7 @@ export function InlineCommand({
         props: {
           w, h,
           text: result.text,
+          richText: { type: "doc", content: paragraphs },
           color: "#0F172A",
           size: "m",
           weight: "normal",

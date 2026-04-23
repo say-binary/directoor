@@ -287,18 +287,61 @@ function PageBackground() {
 
 /**
  * PagePositionPublisher — has no DOM output; its job is to subscribe to
- * the camera + pageWidth and keep the `--ds-page-right-x` CSS variable
- * up to date in screen coords. The floating toolbar and tldraw's
- * StylePanel anchor their right edge to this variable so they always
- * sit inside the page area (not over the grey desk).
+ * the camera + pageWidth and keep the `--ds-page-left-x` and
+ * `--ds-page-right-x` CSS variables up to date in screen coords. UI that
+ * should sit inside the white page (floating toolbar, StylePanel, Edit
+ * Mode toggle) anchors to these vars so it stays over the page whether
+ * the sidebar is open or closed and at any zoom level.
  */
 function PagePositionPublisher() {
   const editor = useEditor();
   const pageWidth = useValue("pageWidth", () => pageWidthAtom.get(), []);
   const camera = useValue("camera", () => editor.getCamera(), [editor]);
   useEffect(() => {
-    const rightX = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
-    document.documentElement.style.setProperty("--ds-page-right-x", `${rightX}px`);
+    let lastLeft = NaN;
+    let lastRight = NaN;
+    const publish = () => {
+      // Force tldraw to re-read the container's bounding rect — camera
+      // events don't fire when the container shifts horizontally (e.g.
+      // the sidebar collapses/expands), so pageToScreen would otherwise
+      // return a stale X. Passing the tl-container element here makes
+      // tldraw resample its getBoundingClientRect(); passing `true` as
+      // the second argument keeps the viewport page-center stable.
+      try {
+        const container = document.querySelector(".tldraw-container > .tl-container");
+        if (container) {
+          // `false` = don't rebalance the camera around the new viewport
+          // centre. We only want tldraw to know the container moved so
+          // pageToScreen returns fresh coords; we do NOT want the camera
+          // to pan sideways each tick (which would make the page drift).
+          (editor as unknown as {
+            updateViewportScreenBounds: (el: Element, center?: boolean) => void;
+          }).updateViewportScreenBounds(container, false);
+        }
+      } catch { /* best-effort */ }
+      const leftX = editor.pageToScreen({ x: 0, y: 0 }).x;
+      const rightX = editor.pageToScreen({ x: pageWidth, y: 0 }).x;
+      if (leftX !== lastLeft) {
+        document.documentElement.style.setProperty("--ds-page-left-x", `${leftX}px`);
+        lastLeft = leftX;
+      }
+      if (rightX !== lastRight) {
+        document.documentElement.style.setProperty("--ds-page-right-x", `${rightX}px`);
+        lastRight = rightX;
+      }
+    };
+    publish();
+    // Poll on a short interval so the variables stay in sync even when
+    // the container's screen position changes without a camera event —
+    // most notably the sidebar opening/closing, which shifts the canvas
+    // horizontally via CSS `left` (no ResizeObserver-detectable size
+    // change). Cheap: two pageToScreen calls + a guarded setProperty.
+    const iv = setInterval(publish, 120);
+    window.addEventListener("resize", publish);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("resize", publish);
+    };
   }, [editor, pageWidth, camera]);
   return null;
 }
@@ -928,6 +971,13 @@ import { Sparkles, Hash } from "lucide-react";
 import { EditIdsOverlay, createEditIdRegistry, ensureEditIds, resolveEditId } from "./EditIdsOverlay";
 import { DirectoorRichTextToolbar } from "./richtext/RichTextToolbar";
 import { directoorTipTapExtensions } from "./richtext/extensions";
+
+// Module-stable textOptions — if this object identity changes between
+// renders, tldraw's useMemo([textOptions]) reinitialises the whole
+// TipTap editor, which can strand the UI in its loading state.
+const DIRECTOOR_TEXT_OPTIONS = {
+  tipTapConfig: { extensions: directoorTipTapExtensions },
+};
 import { supabase } from "@/lib/supabase";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShareDialog } from "./ShareDialog";
@@ -1952,7 +2002,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         onMount={handleMount}
         components={tlComponents}
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
-        textOptions={{ tipTapConfig: { extensions: directoorTipTapExtensions } }}
+        textOptions={DIRECTOOR_TEXT_OPTIONS}
       />
 
       {/* Directoor shape picker — anchored to the right edge of tldraw's
@@ -1992,12 +2042,16 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           }
           setEditIdsMode((v) => !v);
         }}
-        title={editIdsMode ? "Hide shape IDs" : "Show shape IDs (for edit-by-id commands)"}
+        title={editIdsMode ? "Exit edit mode" : "Enter edit mode — shows an ID chip on every asset so you can address it from the command bar"}
         style={{
           position: "fixed",
           top: 16,
-          left: `calc(var(--ds-sidebar-w, 0px) + (100vw - var(--ds-sidebar-w, 0px)) / 2)`,
-          transform: "translateX(-50%)",
+          // Pinned to the page's top-left corner, not the viewport / desk.
+          // --ds-page-left-x is published by PagePositionPublisher and
+          // tracks the white page's left edge in screen coords — so the
+          // toggle stays inside the drawable area whether the sidebar is
+          // open or closed and at any zoom level.
+          left: `calc(var(--ds-page-left-x, 0px) + 12px)`,
           zIndex: 9995,
           display: "flex",
           alignItems: "center",
@@ -2016,8 +2070,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
           pointerEvents: "all",
         }}
       >
-        <Hash size={12} strokeWidth={2.5} />
-        {editIdsMode ? "IDs on" : "Show IDs"}
+        Edit Mode
       </button>
 
       {/* Shape-id chips overlay (rendered only when editIdsMode is on) */}
@@ -2036,8 +2089,10 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         />
       )}
 
-      {/* "Animate" button when shapes are selected (only if not already in a region) */}
-      {selectedShapeIds.length >= 1 && editor && (
+      {/* "Animate" button when shapes are selected. Hidden while the
+          user is actively editing a shape's text so it doesn't overlap
+          the rich-text floating toolbar. */}
+      {selectedShapeIds.length >= 1 && editor && !editor.getEditingShapeId() && (
         <div
           className="fixed z-[9999]"
           style={{ left: selectionToolbarPos.x, top: selectionToolbarPos.y }}

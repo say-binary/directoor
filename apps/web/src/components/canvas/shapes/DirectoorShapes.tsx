@@ -1467,7 +1467,14 @@ export class DirectoorImageShapeUtil extends BaseBoxShapeUtil<DirectoorImageShap
 interface DirectoorTextProps {
   w: number;
   h: number;
+  /** Legacy plain-text content. New shapes store structured content in
+   *  `richText`; `text` is kept so older saved canvases still round-trip
+   *  through validation, and for quick plaintext access (exports, search). */
   text: string;
+  /** TipTap / ProseMirror JSON. Authoritative source of content from the
+   *  day this prop was added. Populated lazily from `text` on first load
+   *  if a canvas predates this migration. */
+  richText: TLRichText;
   /** Text color as hex */
   color: string;
   /** Text size preset */
@@ -1491,6 +1498,7 @@ const textProps: RecordProps<TLBaseShape<"directoor-text", DirectoorTextProps>> 
   w: T.number,
   h: T.number,
   text: T.string,
+  richText: richTextValidator,
   color: T.string,
   size: T.literalEnum("xs", "s", "m", "l", "xl"),
   weight: T.literalEnum("normal", "bold"),
@@ -1502,6 +1510,7 @@ const textProps: RecordProps<TLBaseShape<"directoor-text", DirectoorTextProps>> 
 const textDefaults: DirectoorTextProps = {
   w: 120, h: 28,
   text: "Text",
+  richText: toRichText("Text"),
   color: "#0F172A",
   size: "m",
   weight: "normal",
@@ -1531,7 +1540,7 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
   }
 
   override component(shape: DirectoorTextShape) {
-    const { w, h, text, color, size, weight, align, background, contentType } = shape.props;
+    const { w, h, text, richText, color, size, weight, align, background, contentType } = shape.props;
     const fontSize = TEXT_SIZE_MAP[size];
 
     const bgStyles: Record<DirectoorTextProps["background"], React.CSSProperties> = {
@@ -1540,11 +1549,19 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
       solid: { background: "#FFFFFF", borderRadius: 4, boxShadow: "0 1px 2px rgba(0,0,0,0.08)" },
     };
 
+    // Lazy upgrade: shapes saved before the richText migration land here
+    // with a richText populated by our getDefaultProps("Text"). If the
+    // user's real `text` is non-empty and richText still points at the
+    // default, seed richText from text so rendering isn't empty.
+    const effectiveRichText =
+      richText && !isRichTextEmpty(richText) ? richText : toRichText(text ?? "");
+
     return (
       <HTMLContainer style={{ width: w, height: h, pointerEvents: "all" }}>
         <DirectoorTextInner
           shape={shape}
-          text={text}
+          richText={effectiveRichText}
+          plainText={text}
           w={w}
           h={h}
           fontSize={fontSize}
@@ -1576,7 +1593,8 @@ export class DirectoorTextShapeUtil extends BaseBoxShapeUtil<DirectoorTextShape>
  */
 function DirectoorTextInner({
   shape,
-  text,
+  richText,
+  plainText,
   w,
   h,
   fontSize,
@@ -1587,7 +1605,8 @@ function DirectoorTextInner({
   contentType,
 }: {
   shape: DirectoorTextShape;
-  text: string;
+  richText: TLRichText;
+  plainText: string;
   w: number;
   h: number;
   fontSize: number;
@@ -1604,8 +1623,7 @@ function DirectoorTextInner({
     () => editor.getEditingShapeId() === shapeId,
     [editor, shapeId],
   );
-  const [draft, setDraft] = useState(text);
-  const inputRef = useRef<HTMLDivElement | null>(null);
+  void plainText;
 
   // Obstacles = sibling shapes whose page-bounds intersect ours.
   // Stored as shape-local rects so the layout engine can subtract them
@@ -1639,93 +1657,41 @@ function DirectoorTextInner({
     [editor, shapeId, contentType, w, h],
   );
 
-  useEffect(() => {
-    if (isEditing) {
-      setDraft(text);
-      const t = setTimeout(() => {
-        const el = inputRef.current;
-        if (el) {
-          el.focus();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          const sel = window.getSelection();
-          sel?.removeAllRanges();
-          sel?.addRange(range);
-        }
-      }, 0);
-      return () => clearTimeout(t);
-    }
-  }, [isEditing, text]);
-
-  const commit = () => {
-    const s = editor.getShape(shapeId);
-    if (!s) return;
-    const trimmed = draft.trim();
-    if (trimmed !== text) {
-      editor.updateShape({
-        id: s.id,
-        type: s.type,
-        props: { ...(s.props as Record<string, unknown>), text: trimmed },
-      });
-    }
-    editor.setEditingShape(null);
-  };
-
-  // ─── Inline mode (original label behaviour) ──────────────────
+  // ─── Inline mode (compact label) ─────────────────────────────
+  // Both display and edit render through tldraw's RichTextLabel so the
+  // user gets the rich-text editing pipeline (B/I/U/strike/lists/font
+  // size) in every inline label, and the stored content round-trips
+  // through the shape's richText prop.
   if (contentType === "inline") {
-    const baseStyle: React.CSSProperties = {
-      position: "absolute",
-      inset: 0,
-      display: "flex",
-      alignItems: "center",
-      justifyContent: align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center",
-      padding: "2px 6px",
-      fontFamily: "Inter, system-ui, sans-serif",
-      fontSize,
-      fontWeight: weight === "bold" ? 700 : 500,
-      color,
-      lineHeight: 1.2,
-      textAlign: align,
-      ...bgStyle,
-    };
-
-    if (isEditing) {
-      return (
-        <div
-          ref={inputRef}
-          contentEditable
-          suppressContentEditableWarning
-          onPointerDown={stopEventPropagation}
-          onMouseDown={stopEventPropagation}
-          onClick={stopEventPropagation}
-          onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); commit(); }
-            else if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
-            e.stopPropagation();
-          }}
-          style={{
-            ...baseStyle,
-            outline: "2px solid #3b82f6",
-            outlineOffset: 1,
-            borderRadius: 4,
-            background: "rgba(255,255,255,0.98)",
-            pointerEvents: "all",
-            userSelect: "text",
-            cursor: "text",
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}
-        >
-          {text}
-        </div>
-      );
-    }
-
+    // Map our shape-local align to tldraw's horizontal align enum.
+    const hAlign: TLDefaultHorizontalAlignStyle =
+      align === "left" ? "start" : align === "right" ? "end" : "middle";
     return (
-      <div style={{ ...baseStyle, pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-        {text || <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          borderRadius: 4,
+          pointerEvents: isEditing ? "all" : "none",
+          ...bgStyle,
+        }}
+      >
+        <RichTextLabel
+          shapeId={shapeId}
+          type={shape.type}
+          richText={richText}
+          font={"sans"}
+          fontSize={fontSize}
+          lineHeight={1.2}
+          padding={6}
+          align={hAlign}
+          verticalAlign={"middle"}
+          isSelected={isEditing}
+          labelColor={color}
+          wrap
+        />
       </div>
     );
   }
@@ -1768,12 +1734,14 @@ function DirectoorTextInner({
   const maxLayoutHeight = h - PADDING * 2;
 
   const layout = useMemo(() => {
-    if (!text) return { words: [] as LaidOutWord[], totalHeight: 0 };
+    if (isRichTextEmpty(richText)) {
+      return { words: [] as LaidOutWord[], markers: [] as LaidOutMarker[], totalHeight: 0 };
+    }
     return layoutProse({
-      text,
+      richText,
       width: containerWidth,
-      fontSize,
-      fontWeight: weight === "bold" ? 700 : 400,
+      baseFontSize: fontSize,
+      baseFontWeight: weight === "bold" ? 700 : 400,
       fontFamily: "Inter, system-ui, sans-serif",
       lineHeight: LINE_HEIGHT,
       obstacles: obstacles.map((o) => ({
@@ -1783,7 +1751,7 @@ function DirectoorTextInner({
         h: o.h + GUTTER * 2,
       })),
     });
-  }, [text, containerWidth, fontSize, weight, LINE_HEIGHT, obstacles]);
+  }, [richText, containerWidth, fontSize, weight, LINE_HEIGHT, obstacles]);
 
   // Auto-grow: if the laid-out text overflows the shape, grow the shape.
   useEffect(() => {
@@ -1801,42 +1769,44 @@ function DirectoorTextInner({
     }
   }, [layout.totalHeight, h, contentType, editor, shapeId]);
 
+  // Prose edit mode: hand off to tldraw's RichTextLabel so the user gets
+  // the full TipTap pipeline + our floating toolbar. Standard CSS word-
+  // wrap while editing (no obstacle awareness); on exit we re-render with
+  // the custom flow-around layout below.
   if (isEditing) {
     return (
       <div
-        ref={inputRef}
-        contentEditable
-        suppressContentEditableWarning
-        onPointerDown={stopEventPropagation}
-        onMouseDown={stopEventPropagation}
-        onClick={stopEventPropagation}
-        onInput={(e) => setDraft((e.target as HTMLDivElement).innerText)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") { e.preventDefault(); editor.setEditingShape(null); }
-          e.stopPropagation();
-        }}
         style={{
           ...proseBase,
-          padding: `${PADDING}px`,
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-word",
-          lineHeight: 1.5,
+          padding: PADDING,
+          borderRadius: 4,
           outline: "2px solid #3b82f6",
           outlineOffset: 1,
-          borderRadius: 4,
           background: "rgba(255,255,255,0.98)",
           pointerEvents: "all",
-          userSelect: "text",
-          cursor: "text",
         }}
       >
-        {text}
+        <RichTextLabel
+          shapeId={shapeId}
+          type={shape.type}
+          richText={richText}
+          font={"sans"}
+          fontSize={fontSize}
+          lineHeight={1.5}
+          padding={0}
+          align={align === "left" ? "start" : align === "right" ? "end" : "middle"}
+          verticalAlign={"start"}
+          isSelected={true}
+          labelColor={color}
+          wrap
+        />
       </div>
     );
   }
 
-  if (!text) {
+  void maxLayoutHeight;
+
+  if (isRichTextEmpty(richText)) {
     return (
       <div style={{ ...proseBase, padding: PADDING, pointerEvents: "none" }}>
         <span style={{ opacity: 0.35, fontStyle: "italic" }}>Text</span>
@@ -1847,40 +1817,111 @@ function DirectoorTextInner({
   return (
     <div style={{ ...proseBase, pointerEvents: "none" }}>
       <div style={{ position: "absolute", inset: PADDING }}>
-        {layout.words.map((word, i) => (
+        {layout.markers.map((m, i) => (
           <span
-            key={i}
+            key={`m-${i}`}
             style={{
               position: "absolute",
-              left: word.x,
-              top: word.y,
+              left: m.x,
+              top: m.y,
+              fontSize: m.fontSize,
               whiteSpace: "pre",
             }}
           >
-            {word.text}
+            {m.text}
           </span>
         ))}
+        {layout.words.map((word, i) => {
+          const s: React.CSSProperties = {
+            position: "absolute",
+            left: word.x,
+            top: word.y,
+            fontSize: word.fontSize,
+            whiteSpace: "pre",
+          };
+          if (word.marks.bold) s.fontWeight = 700;
+          if (word.marks.italic) s.fontStyle = "italic";
+          if (word.marks.code) s.fontFamily = '"SFMono-Regular", ui-monospace, monospace';
+          const decorations: string[] = [];
+          if (word.marks.underline) decorations.push("underline");
+          if (word.marks.strike) decorations.push("line-through");
+          if (decorations.length) s.textDecoration = decorations.join(" ");
+          if (word.marks.link) {
+            s.color = "#2563EB";
+            if (!s.textDecoration) s.textDecoration = "underline";
+          }
+          return (
+            <span key={i} style={s}>
+              {word.text}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
+}
+
+/** Check whether a TipTap doc is effectively empty (no text content). */
+function isRichTextEmpty(richText: TLRichText | undefined): boolean {
+  if (!richText) return true;
+  const doc = richText as unknown as { content?: Array<{ content?: unknown[] }> };
+  if (!doc.content || doc.content.length === 0) return true;
+  if (doc.content.length === 1) {
+    const first = doc.content[0];
+    if (!first.content || first.content.length === 0) return true;
+  }
+  return false;
 }
 
 // ─── Prose layout engine ─────────────────────────────────────────────
 // Line-by-line text layout that flows around arbitrary rectangular
 // obstacles anywhere inside the container. Measures word widths using
 // a canvas 2D context (accurate to the actual browser font rendering).
+//
+// Rich-text aware: the layout walks a TipTap / ProseMirror document,
+// extracts blocks (paragraphs, bullet / numbered list items) and their
+// inline marks (bold, italic, underline, strike, code, fontSize), and
+// produces positioned word spans carrying the marks as CSS. Each word
+// is measured in its own font so bold / larger runs don't desync.
+
+interface RunMarks {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  strike?: boolean;
+  code?: boolean;
+  fontSize?: number; // explicit per-run pixel size (FontSize mark)
+  link?: string;
+}
 
 interface LaidOutWord {
   text: string;
   x: number;
   y: number;
+  fontSize: number;
+  marks: RunMarks;
+}
+
+interface LaidOutMarker {
+  text: string;
+  x: number;
+  y: number;
+  fontSize: number;
+}
+
+interface Block {
+  /** List marker text (e.g. "• ", "1. ") or null for plain paragraphs. */
+  marker: string | null;
+  /** Left indent in px applied to the whole block (text + marker). */
+  indent: number;
+  runs: Array<{ text: string; marks: RunMarks }>;
 }
 
 interface LayoutInput {
-  text: string;
+  richText: TLRichText;
   width: number;
-  fontSize: number;
-  fontWeight: number;
+  baseFontSize: number;
+  baseFontWeight: number;
   fontFamily: string;
   lineHeight: number;
   obstacles: Array<{ x: number; y: number; w: number; h: number }>;
@@ -1937,89 +1978,277 @@ function computeAllowedSegments(
   return allowed.filter(([s, e]) => e - s >= 8);
 }
 
+/** Font CSS builder for measurement. */
+function fontCss(family: string, sizePx: number, marks: RunMarks, baseWeight: number): string {
+  const weight = marks.bold ? 700 : baseWeight;
+  const style = marks.italic ? "italic" : "normal";
+  const fam = marks.code ? `"SFMono-Regular", ui-monospace, monospace` : family;
+  return `${style} ${weight} ${sizePx}px ${fam}`;
+}
+
 /**
- * Lay out prose text word-by-word, wrapping around obstacles.
- * Returns positioned words plus total content height (for auto-grow).
+ * Walk a TipTap / ProseMirror doc and flatten it into a list of blocks
+ * we can lay out. Supports paragraph, bulletList, orderedList (one level
+ * deep), and hardBreak inside paragraphs. Nested lists collapse to the
+ * outer list's indent — acceptable for this pass; true nesting is a
+ * follow-up.
  */
-function layoutProse(input: LayoutInput): { words: LaidOutWord[]; totalHeight: number } {
-  const { text, width, fontSize, fontWeight, fontFamily, lineHeight, obstacles } = input;
-  const ctx = getMeasureCtx();
-  if (!ctx) {
-    // Server-side render or canvas unavailable — just produce a rough fallback
-    return { words: [], totalHeight: 0 };
+function blocksFromRichText(richText: TLRichText): Block[] {
+  const blocks: Block[] = [];
+  const INDENT = 24;
+
+  type Node = {
+    type?: string;
+    text?: string;
+    marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
+    attrs?: Record<string, unknown>;
+    content?: Node[];
+  };
+
+  const extractRuns = (
+    node: Node,
+    inherited: RunMarks = {},
+  ): Array<{ text: string; marks: RunMarks }> => {
+    const runs: Array<{ text: string; marks: RunMarks }> = [];
+    const walk = (n: Node, marks: RunMarks) => {
+      if (!n) return;
+      if (n.type === "text" && typeof n.text === "string") {
+        const runMarks: RunMarks = { ...marks };
+        for (const m of n.marks ?? []) {
+          if (m.type === "bold") runMarks.bold = true;
+          else if (m.type === "italic") runMarks.italic = true;
+          else if (m.type === "underline") runMarks.underline = true;
+          else if (m.type === "strike") runMarks.strike = true;
+          else if (m.type === "code") runMarks.code = true;
+          else if (m.type === "link") {
+            const href = (m.attrs?.href as string) ?? "";
+            runMarks.link = href;
+          } else if (m.type === "textStyle") {
+            const fs = (m.attrs?.fontSize as string | null) ?? null;
+            if (fs) {
+              const num = parseFloat(fs);
+              if (!isNaN(num)) runMarks.fontSize = num;
+            }
+          }
+        }
+        runs.push({ text: n.text, marks: runMarks });
+      } else if (n.type === "hardBreak") {
+        runs.push({ text: "\n", marks: { ...marks } });
+      } else if (n.content) {
+        for (const c of n.content) walk(c, marks);
+      }
+    };
+    walk(node, inherited);
+    return runs;
+  };
+
+  const walkNode = (node: Node, indent: number, orderedIndex?: number) => {
+    if (!node) return;
+    switch (node.type) {
+      case "doc":
+        for (const c of node.content ?? []) walkNode(c, indent);
+        return;
+      case "paragraph":
+        blocks.push({ marker: null, indent, runs: extractRuns(node) });
+        return;
+      case "bulletList": {
+        let i = 0;
+        for (const item of node.content ?? []) {
+          walkListItem(item, indent + INDENT, "• ", null);
+          i++;
+        }
+        void i;
+        return;
+      }
+      case "orderedList": {
+        let idx = (node.attrs?.start as number | undefined) ?? 1;
+        for (const item of node.content ?? []) {
+          walkListItem(item, indent + INDENT, `${idx}. `, null);
+          idx++;
+        }
+        return;
+      }
+      default:
+        // Unknown block: treat its inline children as a paragraph to avoid
+        // dropping content silently.
+        if (node.content) {
+          blocks.push({ marker: null, indent, runs: extractRuns(node) });
+        }
+    }
+    void orderedIndex;
+  };
+
+  const walkListItem = (item: Node, indent: number, marker: string, _firstOnly: null) => {
+    void _firstOnly;
+    // A list item contains paragraphs and possibly nested lists. The
+    // marker attaches to the FIRST paragraph only; subsequent paragraphs
+    // inside the same item render as continuation lines without a marker.
+    let first = true;
+    for (const child of item.content ?? []) {
+      if (child.type === "paragraph") {
+        blocks.push({
+          marker: first ? marker : null,
+          indent,
+          runs: extractRuns(child),
+        });
+        first = false;
+      } else if (child.type === "bulletList" || child.type === "orderedList") {
+        walkNode(child, indent);
+      } else {
+        blocks.push({ marker: first ? marker : null, indent, runs: extractRuns(child) });
+        first = false;
+      }
+    }
+  };
+
+  walkNode(richText as unknown as Node, 0);
+  return blocks;
+}
+
+/** Tokenise runs into measurable "words" (no whitespace coalescing across
+ *  mark boundaries — keeps styles precise per-word). Spaces collapse to
+ *  inter-word gaps except when part of a monospace/code run. */
+function tokeniseRuns(runs: Array<{ text: string; marks: RunMarks }>): Array<{ text: string; marks: RunMarks }> {
+  const out: Array<{ text: string; marks: RunMarks }> = [];
+  for (const run of runs) {
+    if (run.text === "\n") {
+      out.push({ text: "\n", marks: run.marks });
+      continue;
+    }
+    // Split on spaces/tabs but not newlines; newlines get their own token.
+    const parts = run.text.split(/([ \t]+|\n)/).filter((p) => p.length > 0);
+    for (const p of parts) {
+      if (/^[ \t]+$/.test(p)) {
+        // represent whitespace as an empty token that only contributes spacing
+        out.push({ text: " ", marks: run.marks });
+      } else if (p === "\n") {
+        out.push({ text: "\n", marks: run.marks });
+      } else {
+        out.push({ text: p, marks: run.marks });
+      }
+    }
   }
-  ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+  return out;
+}
 
-  const spaceWidth = ctx.measureText(" ").width;
+/**
+ * Lay out prose text word-by-word, wrapping around obstacles. Rich-text
+ * aware: each word carries its own marks and font size, and the packer
+ * uses the word's metrics when deciding whether it fits in the remaining
+ * segment.
+ */
+function layoutProse(input: LayoutInput): {
+  words: LaidOutWord[];
+  markers: LaidOutMarker[];
+  totalHeight: number;
+} {
+  const { richText, width, baseFontSize, baseFontWeight, fontFamily, lineHeight, obstacles } = input;
+  const ctx = getMeasureCtx();
+  if (!ctx) return { words: [], markers: [], totalHeight: 0 };
+
   const words: LaidOutWord[] = [];
-
-  // Split into paragraphs (blank-line separated), each an array of tokens.
-  // Preserve single newlines as explicit breaks.
-  const paragraphs = text.split(/\n\s*\n/).map((p) => p.replace(/\n/g, " ").trim()).filter(Boolean);
+  const markers: LaidOutMarker[] = [];
+  const blocks = blocksFromRichText(richText);
 
   let y = 0;
-  for (let pi = 0; pi < paragraphs.length; pi++) {
-    const tokens = paragraphs[pi]!.split(/\s+/).filter(Boolean);
-    let ti = 0;
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi]!;
+    const tokens = tokeniseRuns(block.runs);
 
+    // Marker (• / 1.) is laid out once at the block start.
+    if (block.marker) {
+      ctx.font = fontCss(fontFamily, baseFontSize, {}, baseFontWeight);
+      markers.push({ text: block.marker, x: block.indent, y, fontSize: baseFontSize });
+    }
+
+    let ti = 0;
+    let firstLine = true;
     while (ti < tokens.length) {
-      // For this line, compute allowed segments
-      const segments = computeAllowedSegments(width, y, lineHeight, obstacles);
+      // Marker sits at block.indent; subsequent lines of the same item
+      // align with the TEXT start (indent + marker width), not the marker.
+      let baseLeft = block.indent;
+      if (block.marker) {
+        ctx.font = fontCss(fontFamily, baseFontSize, {}, baseFontWeight);
+        const markerW = ctx.measureText(block.marker).width;
+        baseLeft = block.indent + markerW;
+      }
+      // Compute this line's allowed segments accounting for the block's
+      // indent: every segment is clipped to [baseLeft, width].
+      const rawSegments = computeAllowedSegments(width, y, lineHeight, obstacles);
+      const segments = rawSegments
+        .map(([s, e]) => [Math.max(s, baseLeft), e] as [number, number])
+        .filter(([s, e]) => e - s >= 8);
 
       if (segments.length === 0) {
-        // Entire line blocked — skip down to next available band
         y += lineHeight;
-        if (y > 10_000) break; // safety
+        if (y > 10_000) break;
         continue;
       }
 
       let placedThisLine = false;
+      let hitHardBreak = false;
       for (const [segStart, segEnd] of segments) {
         let cursor = segStart;
         const segRight = segEnd;
 
         while (ti < tokens.length) {
-          const token = tokens[ti]!;
-          const tokenW = ctx.measureText(token).width;
+          const t = tokens[ti]!;
 
-          // If the token is wider than the entire segment, hard-break it
-          // onto its own line (fallback to whole-width).
+          if (t.text === "\n") {
+            // Hard break: consume and drop to next line.
+            ti++;
+            hitHardBreak = true;
+            break;
+          }
+
+          if (t.text === " ") {
+            // Whitespace only contributes spacing inside a segment; skip
+            // if we're at a segment's leading edge.
+            if (cursor > segStart) {
+              ctx.font = fontCss(fontFamily, t.marks.fontSize ?? baseFontSize, t.marks, baseFontWeight);
+              cursor += ctx.measureText(" ").width;
+            }
+            ti++;
+            continue;
+          }
+
+          const sizePx = t.marks.fontSize ?? baseFontSize;
+          ctx.font = fontCss(fontFamily, sizePx, t.marks, baseFontWeight);
+          const tokenW = ctx.measureText(t.text).width;
+
           if (tokenW > segEnd - segStart && cursor === segStart) {
-            // Place it anyway, it will overflow visually but at least won't freeze
-            words.push({ text: token, x: segStart, y });
-            cursor = segStart + tokenW + spaceWidth;
+            // Too wide for this segment — place anyway so we don't stall.
+            words.push({ text: t.text, x: segStart, y, fontSize: sizePx, marks: t.marks });
+            cursor = segStart + tokenW;
             ti++;
             placedThisLine = true;
             continue;
           }
 
-          // Normal fit check
-          const needed = tokenW + (cursor > segStart ? spaceWidth : 0);
-          if (cursor + needed > segRight) break; // segment full
+          if (cursor + tokenW > segRight) break; // segment full
 
-          const placeX = cursor + (cursor > segStart ? spaceWidth : 0);
-          words.push({ text: token, x: placeX, y });
-          cursor = placeX + tokenW;
+          words.push({ text: t.text, x: cursor, y, fontSize: sizePx, marks: t.marks });
+          cursor += tokenW;
           ti++;
           placedThisLine = true;
         }
 
         if (ti >= tokens.length) break;
+        if (hitHardBreak) break;
       }
 
-      // If nothing could be placed on this line (rare — e.g. super-narrow
-      // segments), advance anyway to avoid infinite loop.
-      if (!placedThisLine) ti++;
-
+      if (!placedThisLine && !hitHardBreak) ti++;
       y += lineHeight;
-      if (y > 10_000) break; // safety
+      firstLine = false;
+      void firstLine;
+      if (y > 10_000) break;
     }
 
-    // Paragraph gap — add half a line height between paragraphs
-    if (pi < paragraphs.length - 1) y += Math.round(lineHeight * 0.6);
+    // Paragraph/block gap
+    if (bi < blocks.length - 1) y += Math.round(lineHeight * 0.4);
   }
 
-  return { words, totalHeight: y };
+  return { words, markers, totalHeight: y };
 }
 
 // ─── Arrow Shape (replaces tldraw native arrow) ─────────────────────

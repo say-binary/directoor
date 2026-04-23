@@ -303,7 +303,7 @@ function buildArrowXml(
 
 /** Build a text-only box for directoor-text shapes. */
 function buildTextBoxXml(
-  _editor: Editor,
+  editor: Editor,
   shape: TLShape,
   spid: number,
   emuX: number,
@@ -313,12 +313,17 @@ function buildTextBoxXml(
 ): string {
   const props = shape.props as {
     text: string;
+    richText?: unknown;
     color?: string;
     size?: "xs" | "s" | "m" | "l" | "xl";
     weight?: "normal" | "bold";
     align?: "left" | "center" | "right";
   };
-  const text = props.text ?? "";
+  // Prefer the rich-text JSON (authoritative since the richText migration);
+  // fall back to the legacy plain-text prop for shapes created before it.
+  const text = props.richText
+    ? renderPlaintextFromRichText(editor, props.richText as never)
+    : (props.text ?? "");
   const color = hex(props.color ?? "#0F172A");
   const sizeMap = { xs: 800, s: 1000, m: 1200, l: 1600, xl: 2200 };
   const sizePt = sizeMap[props.size ?? "m"] ?? 1200;

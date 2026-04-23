@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  DefaultRichTextToolbar,
-  DefaultRichTextToolbarContent,
-  useEditor,
-  useValue,
-} from "tldraw";
+import { useEditor, useValue } from "tldraw";
 import {
   Bold,
   Italic,
@@ -20,10 +15,17 @@ import {
 } from "lucide-react";
 
 /**
- * Custom rich-text contextual toolbar. For the native `text` shape we
- * render an extended button set (underline, strike, lists, font size).
- * For every other rich-text host (note, directoor shape labels) we fall
- * back to tldraw's stock toolbar so existing behaviour is unchanged.
+ * Directoor's rich-text contextual toolbar.
+ *
+ * A standalone floating formatting bar anchored to the editing shape's
+ * page bounds. Visible for the whole edit session — not just when a
+ * range is highlighted — so users can click a format before typing,
+ * the way Notion / Google Docs behave. Applied uniformly to every
+ * shape that hosts rich text: the native text shape, sticky notes,
+ * and directoor shape labels (database / queue / service / ...).
+ * The underlying TipTap commands (bold, italic, underline, lists,
+ * font size, link, …) work identically across all three so a single
+ * toolbar surface is enough.
  */
 export function DirectoorRichTextToolbar() {
   const editor = useEditor();
@@ -32,29 +34,12 @@ export function DirectoorRichTextToolbar() {
     () => editor.getEditingShapeId(),
     [editor],
   );
-  const editingShapeType = editingShapeId
-    ? editor.getShape(editingShapeId)?.type
-    : undefined;
 
-  if (editingShapeType !== "text") {
-    // Fall back to tldraw's default content for notes + shape labels.
-    return <DefaultRichTextToolbar />;
-  }
-
-  return (
-    <DefaultRichTextToolbar>
-      <TextShapeToolbarContent />
-    </DefaultRichTextToolbar>
-  );
+  if (!editingShapeId) return null;
+  return <TextShapeFloatingToolbar shapeId={editingShapeId} />;
 }
 
-/**
- * The inside of the contextual toolbar when the user is editing a `text`
- * shape. We wire each button straight to TipTap commands on the active
- * rich-text editor — same pattern tldraw uses for its own default
- * content.
- */
-function TextShapeToolbarContent() {
+function TextShapeFloatingToolbar({ shapeId }: { shapeId: string }) {
   const editor = useEditor();
   const textEditor = useValue(
     "textEditor",
@@ -62,8 +47,28 @@ function TextShapeToolbarContent() {
     [editor],
   );
 
-  // Force re-render when the selection or content changes so active state
-  // reflects the current cursor.
+  // Track screen-space anchor. We use the shape's top-centre in page
+  // coords so the toolbar can centre itself above the shape instead of
+  // hanging off the left edge (which clipped out of the viewport for
+  // small text shapes). Camera pan/zoom doesn't trigger React re-renders
+  // in tldraw, so we poll.
+  const [anchor, setAnchor] = useState<{ cx: number; top: number } | null>(null);
+  useEffect(() => {
+    const update = () => {
+      const b = editor.getShapePageBounds(shapeId as Parameters<typeof editor.getShapePageBounds>[0]);
+      if (!b) {
+        setAnchor(null);
+        return;
+      }
+      const pt = editor.pageToScreen({ x: b.x + b.w / 2, y: b.y });
+      setAnchor({ cx: pt.x, top: pt.y });
+    };
+    update();
+    const iv = setInterval(update, 150);
+    return () => clearInterval(iv);
+  }, [editor, shapeId]);
+
+  // Re-render on TipTap selection / content changes so isActive() styles refresh.
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!textEditor) return;
@@ -76,106 +81,105 @@ function TextShapeToolbarContent() {
     };
   }, [textEditor]);
 
-  if (!textEditor) return null;
+  if (!textEditor || !anchor) return null;
 
   const isActive = (name: string, attrs?: Record<string, unknown>) =>
     textEditor.isActive(name, attrs);
 
-  const currentFontSize = (textEditor.getAttributes("textStyle") as {
+  const currentFontSize = ((textEditor.getAttributes("textStyle") as {
     fontSize?: string;
-  }).fontSize ?? "";
+  }).fontSize ?? "") as string;
 
-  const runCmd = (fn: () => void) => (e: React.MouseEvent) => {
+  // Wrap every chain call so its focus isn't stolen from the contenteditable.
+  const chain = () => (textEditor.chain() as unknown as {
+    focus: () => {
+      toggleBold: () => { run: () => void };
+      toggleItalic: () => { run: () => void };
+      toggleUnderline: () => { run: () => void };
+      toggleStrike: () => { run: () => void };
+      toggleCode: () => { run: () => void };
+      toggleBulletList: () => { run: () => void };
+      toggleOrderedList: () => { run: () => void };
+      setMark: (name: string, attrs: Record<string, unknown>) => {
+        run: () => void;
+        removeEmptyTextStyle: () => { run: () => void };
+      };
+      extendMarkRange: (name: string) => {
+        setLink: (attrs: Record<string, unknown>) => { run: () => void };
+      };
+      unsetLink: () => { run: () => void };
+    };
+  }).focus();
+
+  // Place the toolbar above the shape with an 8px gap; if that'd push it
+  // off the top of the viewport, drop it below the shape instead.
+  // Horizontally centre it over the shape but clamp to stay inside the
+  // viewport so the right-hand buttons don't get clipped for text
+  // shapes near the page edges.
+  const TOOLBAR_H = 38;
+  const TOOLBAR_W = 440; // approx — enough slack for clamping
+  const above = anchor.top - TOOLBAR_H - 8;
+  const top = above < 8 ? anchor.top + 32 : above;
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const half = TOOLBAR_W / 2;
+  const left = Math.max(8, Math.min(anchor.cx - half, vw - TOOLBAR_W - 8));
+
+  const btnGuard = (fn: () => void) => (e: React.MouseEvent) => {
     e.preventDefault();
     fn();
   };
 
   return (
     <div
-      // pointer-events are re-enabled on the toolbar itself because
-      // tldraw's contextual toolbar wrapper sets pointer-events: none on
-      // its outer shell.
-      className="flex items-center gap-0.5 px-1 py-1"
-      style={{ pointerEvents: "all" }}
+      className="flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white px-1 py-1 shadow-lg"
+      style={{
+        position: "fixed",
+        left,
+        top,
+        zIndex: 9998,
+        pointerEvents: "all",
+      }}
+      // Don't let pointerdown steal focus from the contenteditable — the
+      // TipTap editor loses selection otherwise and commands no-op.
+      onPointerDown={(e) => e.preventDefault()}
+      onMouseDown={(e) => e.preventDefault()}
     >
-      <ToolbarButton
-        title="Bold (⌘B)"
-        active={isActive("bold")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleBold().run())}
-      >
+      <ToolbarButton title="Bold (⌘B)" active={isActive("bold")} onClick={btnGuard(() => chain().toggleBold().run())}>
         <Bold size={14} />
       </ToolbarButton>
-      <ToolbarButton
-        title="Italic (⌘I)"
-        active={isActive("italic")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleItalic().run())}
-      >
+      <ToolbarButton title="Italic (⌘I)" active={isActive("italic")} onClick={btnGuard(() => chain().toggleItalic().run())}>
         <Italic size={14} />
       </ToolbarButton>
-      <ToolbarButton
-        title="Underline (⌘U)"
-        active={isActive("underline")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleUnderline().run())}
-      >
+      <ToolbarButton title="Underline (⌘U)" active={isActive("underline")} onClick={btnGuard(() => chain().toggleUnderline().run())}>
         <UnderlineIcon size={14} />
       </ToolbarButton>
-      <ToolbarButton
-        title="Strikethrough"
-        active={isActive("strike")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleStrike().run())}
-      >
+      <ToolbarButton title="Strikethrough" active={isActive("strike")} onClick={btnGuard(() => chain().toggleStrike().run())}>
         <Strikethrough size={14} />
       </ToolbarButton>
-      <ToolbarButton
-        title="Inline code"
-        active={isActive("code")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleCode().run())}
-      >
+      <ToolbarButton title="Inline code" active={isActive("code")} onClick={btnGuard(() => chain().toggleCode().run())}>
         <Code2 size={14} />
       </ToolbarButton>
       <Divider />
-      <ToolbarButton
-        title="Bullet list"
-        active={isActive("bulletList")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleBulletList().run())}
-      >
+      <ToolbarButton title="Bullet list" active={isActive("bulletList")} onClick={btnGuard(() => chain().toggleBulletList().run())}>
         <List size={14} />
       </ToolbarButton>
-      <ToolbarButton
-        title="Numbered list"
-        active={isActive("orderedList")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => (textEditor.chain() as any).focus().toggleOrderedList().run())}
-      >
+      <ToolbarButton title="Numbered list" active={isActive("orderedList")} onClick={btnGuard(() => chain().toggleOrderedList().run())}>
         <ListOrdered size={14} />
       </ToolbarButton>
       <Divider />
-      <label
-        title="Font size"
-        className="flex items-center gap-1 pl-1 pr-1.5 text-slate-600"
-      >
+      <label title="Font size" className="flex items-center gap-1 pl-1 pr-1.5 text-slate-600">
         <Type size={13} />
         <select
           className="bg-transparent text-[12px] outline-none"
           value={currentFontSize}
           onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
           onChange={(e) => {
             const v = e.target.value;
             if (v === "") {
-              (textEditor.chain() as any).focus()
-                .setMark("textStyle", { fontSize: null })
-                .removeEmptyTextStyle()
-                .run();
+              chain().setMark("textStyle", { fontSize: null }).removeEmptyTextStyle().run();
             } else {
-              (textEditor.chain() as any).focus()
-                .setMark("textStyle", { fontSize: v })
-                .run();
+              chain().setMark("textStyle", { fontSize: v }).run();
             }
           }}
         >
@@ -189,16 +193,15 @@ function TextShapeToolbarContent() {
       <ToolbarButton
         title="Link (⌘K)"
         active={isActive("link")}
-        onPointerDown={(e) => e.preventDefault()}
-        onClick={runCmd(() => {
+        onClick={btnGuard(() => {
           const existing = (textEditor.getAttributes("link") as { href?: string }).href ?? "";
           const href = window.prompt("Link URL", existing);
           if (href === null) return;
           if (!href) {
-            (textEditor.chain() as any).focus().unsetLink().run();
+            chain().unsetLink().run();
             return;
           }
-          (textEditor.chain() as any).focus().extendMarkRange("link").setLink({ href }).run();
+          chain().extendMarkRange("link").setLink({ href }).run();
         })}
       >
         <LinkIcon size={14} />
@@ -212,20 +215,17 @@ function ToolbarButton({
   title,
   children,
   onClick,
-  onPointerDown,
 }: {
   active?: boolean;
   title: string;
   children: React.ReactNode;
   onClick: (e: React.MouseEvent) => void;
-  onPointerDown?: (e: React.PointerEvent) => void;
 }) {
   return (
     <button
       type="button"
       title={title}
       aria-pressed={active ? "true" : "false"}
-      onPointerDown={onPointerDown}
       onClick={onClick}
       className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
         active
@@ -241,5 +241,3 @@ function ToolbarButton({
 function Divider() {
   return <div className="mx-0.5 h-5 w-px bg-slate-200" />;
 }
-
-export { DefaultRichTextToolbarContent };
