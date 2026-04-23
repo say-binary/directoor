@@ -897,6 +897,7 @@ const tlComponents: TLComponents = {
   OnTheCanvas: PageBackground,         // page on top — white + dot grid
   InFrontOfTheCanvas: PageChrome,      // grab handle + position publisher
   StylePanel: ConditionalStylePanel,   // hidden unless shape selected
+  RichTextToolbar: DirectoorRichTextToolbar, // extended set for text shapes
 };
 
 /**
@@ -925,6 +926,8 @@ import { InlineCommand } from "../command-bar/InlineCommand";
 import { AnimationRegion, type AnimationRegionData } from "../animation/AnimationRegion";
 import { Sparkles, Hash } from "lucide-react";
 import { EditIdsOverlay, createEditIdRegistry, ensureEditIds, resolveEditId } from "./EditIdsOverlay";
+import { DirectoorRichTextToolbar } from "./richtext/RichTextToolbar";
+import { directoorTipTapExtensions } from "./richtext/extensions";
 import { supabase } from "@/lib/supabase";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { ShareDialog } from "./ShareDialog";
@@ -1949,6 +1952,7 @@ export function DirectoorCanvas({ canvasId, userId, tier, onSaveReady, onEditorR
         onMount={handleMount}
         components={tlComponents}
         shapeUtils={DIRECTOOR_SHAPE_UTILS}
+        textOptions={{ tipTapConfig: { extensions: directoorTipTapExtensions } }}
       />
 
       {/* Directoor shape picker — anchored to the right edge of tldraw's
